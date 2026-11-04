@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>태양 복사 에너지 실험실 — 지표와 대기의 열 출입</title>
+  <meta name="description" content="통합과학 「지표와 대기의 열 출입」 — 태양 복사 에너지의 산란·반사·흡수·굴절을 조건을 바꾸며 탐구하는 시뮬레이터" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23ffd166'/%3E%3Cg stroke='%23ffd166' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M16 2v4M16 26v4M2 16h4M26 16h4M6 6l3 3M23 23l3 3M6 26l3-3M23 9l3-3'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="top">
+    <button class="brand" id="brand" type="button" title="처음 화면으로">
+      <svg class="brand-ic" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="6.5" fill="#ffd166"/><g stroke="#ffd166" stroke-width="2.2" stroke-linecap="round"><path d="M16 3v4M16 25v4M3 16h4M25 16h4M6.8 6.8l2.8 2.8M22.4 22.4l2.8 2.8M6.8 25.2l2.8-2.8M22.4 9.6l2.8-2.8"/></g></svg>
+      <span class="brand-t">
+        <b>태양 복사 에너지 실험실</b>
+        <small>통합과학 · 지표와 대기의 열 출입</small>
+      </span>
+    </button>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="학습 주제"></nav>
+  </header>
+
+  <main class="main">
+    <section class="stage-wrap">
+      <div class="stage" id="stage">
+        <canvas id="sim" aria-label="시뮬레이션 화면"></canvas>
+      </div>
+    </section>
+
+    <aside class="panel" id="panel" aria-label="조건 조절 패널">
+      <div class="player" id="player">
+        <button type="button" class="pl-btn" id="btnPlay" aria-label="일시정지">
+          <svg viewBox="0 0 24 24" class="ic-pause"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          <svg viewBox="0 0 24 24" class="ic-play"><path d="M8 5.5v13l11-6.5z"/></svg>
+          <span id="playLabel">일시정지</span>
+        </button>
+        <button type="button" class="pl-btn" id="btnReset" aria-label="초기화">
+          <svg viewBox="0 0 24 24"><path d="M12 5a7 7 0 1 1-6.6 4.7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M4 4.5v5.2h5.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>초기화</span>
+        </button>
+        <div class="pl-speed" role="group" aria-label="재생 속도">
+          <button type="button" data-speed="0.5">0.5×</button>
+          <button type="button" data-speed="1" class="on">1×</button>
+          <button type="button" data-speed="2">2×</button>
+        </div>
+      </div>
+      <div class="panel-head">
+        <span class="panel-dot" id="panelDot"></span>
+        <h2 id="panelTitle">조건 조절</h2>
+      </div>
+      <div id="panelBody"></div>
+    </aside>
+  </main>
+
+  <section class="explain" id="explain">
+    <div class="ex-main">
+      <ol class="flow" id="principle"></ol>
+      <div class="live">
+        <div class="live-now" id="liveNow"></div>
+        <div class="live-change" id="liveChange" hidden></div>
+      </div>
+    </div>
+    <div class="quiz" id="quiz"></div>
+  </section>
+
+  <script src="js/core.js"></script>
+  <script src="js/scatter.js"></script>
+  <script src="js/reflect.js"></script>
+  <script src="js/absorb.js"></script>
+  <script src="js/refract.js"></script>
+  <script src="js/journey.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
