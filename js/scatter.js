@@ -41,6 +41,9 @@
       '태양이 낮으면 빛이 대기를 더 길게 지나 파란빛이 많이 빠져나가고, 남은 빛 때문에 태양이 붉게 보인다.',
     ],
 
+    infoLabel: '💡 왜 파란빛이 더 잘 산란될까?',
+    info() { SR.rayleigh.openPopup(); },
+
     sightMode() { return this.lv === 'basic' ? 'sky' : this.s.sight; },
 
     setLevel(lv) {

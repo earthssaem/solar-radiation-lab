@@ -92,6 +92,7 @@
     body.appendChild(m.panel);
     placeQuiz();
     renderPrinciple();
+    paintInfo();
     renderQuiz();
     renderLive();
     if (m.enter) m.enter();
@@ -149,6 +150,13 @@
     $('#principleFull').innerHTML = full.map((t, i) => `<li><span class="fk">${key(full, i)}</span> ${t}</li>`).join('');
   }
   app.renderPrinciple = renderPrinciple;
+  // 보충 학습 팝업 버튼(모드가 info를 가질 때만)
+  $('#exInfo').addEventListener('click', () => { const m = app.mode; if (m && m.info) m.info(); });
+  function paintInfo() {
+    const m = app.mode, b = $('#exInfo');
+    b.hidden = !(m && m.info);
+    if (m && m.infoLabel) b.textContent = m.infoLabel;
+  }
 
   function renderLive() {
     const m = app.mode;
@@ -267,6 +275,7 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space') return;
+    if (SR.rayleigh && SR.rayleigh.open) return; // 팝업이 열려 있으면 뒤쪽 조작 막기
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA')) return;
     e.preventDefault();
