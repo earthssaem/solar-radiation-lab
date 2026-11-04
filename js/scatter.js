@@ -35,9 +35,25 @@
       '그래서 낮에는 하늘이 파랗게 보이고, 태양이 낮아 대기를 지나는 거리가 길어지면 파란빛이 대부분 빠져나가 태양이 붉게 보인다.',
     ],
 
+    principleBasic: [
+      '햇빛(백색광)에는 여러 색의 빛이 섞여 있고, 공기 분자는 파장이 짧은 파란빛을 더 강하게 산란시킨다.',
+      '산란된 파란빛이 하늘 여러 방향에서 관측자의 눈에 들어온다 → 하늘이 파랗게 보인다.',
+      '태양이 낮으면 빛이 대기를 더 길게 지나 파란빛이 많이 빠져나가고, 남은 빛 때문에 태양이 붉게 보인다.',
+    ],
+
+    sightMode() { return this.lv === 'basic' ? 'sky' : this.s.sight; },
+
+    setLevel(lv) {
+      this.lv = lv;
+      this.ph = [];
+      this.fx.clear();
+      this.recompute();
+      this.app.markDirty();
+    },
+
     quiz: {
       q: '태양의 고도를 낮추면 태양이 붉게 보이는 이유는 무엇일까?',
-      hint: '태양 고도를 낮춘 뒤 ‘대기 통과 거리’와 ‘직접 도달하는 빛’ 막대를 비교해 보세요.',
+      hint: '태양 고도를 낮추며 ‘대기 통과 거리’와 태양빛에 남은 색을 비교해 보세요.',
       options: [
         '대기를 지나는 거리가 길어져 파란빛이 도중에 더 많이 산란되어 빠지기 때문',
         '저녁에는 태양이 붉은빛을 더 많이 내보내기 때문',
@@ -57,6 +73,7 @@
     init(app) {
       this.app = app;
       this.s = { ...this.defaults, show: { b: true, g: true, r: true } };
+      this.lv = app.level;
       this.fx = new SR.Effects();
       this.view = SR.makeCanvas(VIEW.pw, VIEW.ph);
       this.buildPanel();
@@ -69,6 +86,7 @@
       this.fx.clear();
       this.acc = 0;
       this.accObs = 0;
+      this.accSky = 0.5;
       this.eyeHits = [0, 0, 0];
       this.eyeFlash = 0;
       this.t = 0;
@@ -146,9 +164,11 @@
           this.app.markDirty();
         },
       });
-      s1.append(this.ctl.h.el, this.ctl.aer.el, this.ctl.sight.el, this.ctl.sightEl.el, this.ctl.show.el);
+      [this.ctl.aer, this.ctl.sight, this.ctl.sightEl, this.ctl.show].forEach((c) => c.el.classList.add('adv-only'));
+      const bh = SR.el('p', 'ctl-hint basic-only', '태양 고도만 바꾸며 대기 통과 거리, 태양의 색, 하늘의 색을 관찰하세요.');
+      s1.append(this.ctl.h.el, bh, this.ctl.aer.el, this.ctl.sight.el, this.ctl.sightEl.el, this.ctl.show.el);
 
-      const s2 = ui.section('측정값', '공기 분자 + 먼지에 의한 산란만 계산한 값');
+      const s2 = ui.section('측정값', '<span class="adv-only">공기 분자 + 먼지에 의한 산란만 계산한 값 (실제 공기량·광학적 두께 사용)</span>');
       this.ro = {};
       const am = SR.el('div', 'ro-big');
       am.innerHTML = '<span class="ro-k">대기 통과 거리</span><span class="ro-v" data-k="am"></span><span class="ro-u">태양이 머리 위일 때의 배수</span>';
@@ -157,12 +177,14 @@
       tb.innerHTML = '<div class="ro-k">태양에서 직접 도달하는 빛 (산란되지 않고 남은 비율)</div>' +
         BANDS.map((b) => `<div class="bar-row"><span class="bar-name">${b.name}</span><span class="bar"><i data-b="${b.key}" style="background:rgb(${b.col})"></i></span><span class="bar-num" data-n="${b.key}"></span></div>`).join('');
       this.ro.bars = tb;
+      tb.classList.add('adv-only');
       const sw = SR.el('div', 'ro-swatches');
       sw.innerHTML = '<div><i data-sw="sun"></i><span>태양의 색</span></div><div><i data-sw="sky"></i><span data-sw-l="sky">시선 방향 하늘색</span></div>';
       this.ro.sw = sw;
+      sw.classList.add('adv-only');
       s2.append(am, tb, sw);
 
-      const s3 = SR.el('div', 'pnl-foot');
+      const s3 = SR.el('div', 'pnl-foot adv-only');
       s3.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
       p.append(s1, s2, s3);
       this.panel = p;
@@ -207,7 +229,7 @@
       this.s3 = [Math.cos(h * D), 0, Math.sin(h * D)];
 
       // 시선
-      if (s.sight === 'sky') {
+      if (this.sightMode() === 'sky') {
         const e = s.sightEl * D;
         this.v = [Math.cos(e), -Math.sin(e)];
         this.v3 = [-Math.cos(e), 0, Math.sin(e)];
@@ -217,10 +239,13 @@
       }
       this.tSight = SR.rayCircle(E.x, E.y, this.v[0], this.v[1], CX, CY, RA)[1];
       this.sightEnd = { x: E.x + this.v[0] * this.tSight, y: E.y + this.v[1] * this.tSight };
+      // 기본 모드: 시선 위의 한 점 P를 지나는 대표 광선
+      const tp = this.tSight * 0.58;
+      this.P = { x: E.x + this.v[0] * tp, y: E.y + this.v[1] * tp };
       this.skyLin = this.skyRadiance(this.v3);
-      const skyDir = s.sight === 'sky' ? this.v3 : [-Math.cos(60 * D), 0, Math.sin(60 * D)];
+      const skyDir = this.sightMode() === 'sky' ? this.v3 : [-Math.cos(60 * D), 0, Math.sin(60 * D)];
       this.skyRef = SR.linTo255(SR.tonemap(this.skyRadiance(skyDir), this.exposure));
-      this.skyCol = s.sight === 'sky' ? SR.linTo255(SR.tonemap(this.skyLin, this.exposure)) : this.sunCol;
+      this.skyCol = this.sightMode() === 'sky' ? SR.linTo255(SR.tonemap(this.skyLin, this.exposure)) : this.sunCol;
       this.zenCol = SR.linTo255(SR.tonemap(this.skyRadiance([-0.05, 0, 0.9987]), this.exposure));
 
       // 관측자 레이 경로의 색(경로를 따라 바뀌는 투과광의 색)
@@ -256,8 +281,8 @@
       const c = this.view.getContext('2d');
       const W = VIEW.pw, H = VIEW.ph;
       const img = c.createImageData(W, H);
-      const yaw = this.s.sight === 'sky' ? Math.PI : 0;
-      const pitch = (this.s.sight === 'sky' ? this.s.sightEl : this.s.h) * D;
+      const yaw = this.sightMode() === 'sky' ? Math.PI : 0;
+      const pitch = (this.sightMode() === 'sky' ? this.s.sightEl : this.s.h) * D;
       const f = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch)];
       const r = [-Math.sin(yaw), Math.cos(yaw), 0];
       const up = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
@@ -303,8 +328,8 @@
         this.ro.bars.querySelector(`[data-n=${b.key}]`).textContent = pct + '%';
       });
       this.ro.sw.querySelector('[data-sw=sun]').style.background = SR.css(this.sunCol);
-      this.ro.sw.querySelector('[data-sw=sky]').style.background = SR.css(this.s.sight === 'sky' ? this.skyCol : this.skyRef);
-      this.ro.sw.querySelector('[data-sw-l=sky]').textContent = this.s.sight === 'sky' ? '시선 방향 하늘색' : '태양 반대쪽 하늘색';
+      this.ro.sw.querySelector('[data-sw=sky]').style.background = SR.css(this.sightMode() === 'sky' ? this.skyCol : this.skyRef);
+      this.ro.sw.querySelector('[data-sw-l=sky]').textContent = this.sightMode() === 'sky' ? '시선 방향 하늘색' : '태양 반대쪽 하늘색';
     },
 
     /* ---------------- 설명 문장 ---------------- */
@@ -354,12 +379,20 @@
       }
       return '';
     },
+    liveBasic() {
+      const h = this.s.h;
+      const more = this.ms >= 3;
+      const t = `<b>태양 고도 ${h}°</b> → 햇빛이 대기를 지나는 거리 <b>×${this.ms.toFixed(1)}</b> → ` +
+        (more ? '파란빛이 도중에 많이 산란되어 빠져나가고 ' : '파란빛이 일부만 산란되어 빠져나가고 ') +
+        `태양은 <b>${this.sunWord()}</b>, 하늘은 산란된 빛 때문에 <b>${this.skyWord(this.skyCol)}</b>으로 보입니다.`;
+      return { now: t, change: '' };
+    },
     live() {
       const h = this.s.h;
       const tb = Math.round(this.trans[0] * 100), tr = Math.round(this.trans[2] * 100);
       let t = `<b>태양 고도 ${h}°</b>: 햇빛이 대기를 지나는 거리가 태양이 머리 위에 있을 때의 <b>${this.ms.toFixed(1)}배</b>입니다. ` +
         `이 경로를 지나는 동안 파란빛은 <b>${tb}%</b>, 빨간빛은 <b>${tr}%</b>가 산란되지 않고 남아 태양은 <b>${this.sunWord()}</b>으로 보입니다. `;
-      if (this.s.sight === 'sky') {
+      if (this.sightMode() === 'sky') {
         t += `관측자는 ${this.s.sightEl}° 높이의 하늘을 보고 있어, 그 방향의 공기가 관측자 쪽으로 산란시킨 빛(대부분 파장이 짧은 빛)이 눈에 들어와 하늘이 <b>${this.skyWord(this.skyCol)}</b>으로 보입니다.`;
       } else {
         t += `관측자는 태양을 직접 보고 있어, 산란되지 않고 남은 빛이 그대로 눈에 들어옵니다.`;
@@ -409,7 +442,11 @@
       p.w = 1.8;
       p.r = 2.3;
       let dir = null;
-      if (this.s.sight === 'sky') {
+      if (p.toEye) {
+        const ex = E.x - p.x, ey = E.y - p.y, L = Math.hypot(ex, ey);
+        dir = [ex / L, ey / L];
+        p.state = 2; p.a = 1; p.w = 2.6; p.r = 3;
+      } else if (this.sightMode() === 'sky' && !p.noEye) {
         const dd = SR.distToSeg(p.x, p.y, E.x, E.y, this.sightEnd.x, this.sightEnd.y);
         if (dd < 26) {
           const ex = E.x - p.x, ey = E.y - p.y, L = Math.hypot(ex, ey);
@@ -444,17 +481,62 @@
       this.fx.add({ type: 'ring', x: p.x, y: p.y, col, r0: 2, r1: p.aer ? 12 : 10, dur: 0.4, lw: 1.4, a: p.aer ? 0.6 : 0.9 });
     },
 
+    // 기본 모드: 같은 출발점에서 함께 출발하는 세 색(백색광) 묶음
+    emitPacket(kind) {
+      const d = this.d, n = this.n;
+      const back = 1700;
+      let Q, tEndBase;
+      if (kind === 'obs') Q = E;
+      else Q = this.P;
+      const P0 = { x: Q.x - d[0] * back, y: Q.y - d[1] * back };
+      const tStart = back + ((this.S.x - Q.x) * d[0] + (this.S.y - Q.y) * d[1]);
+      const a = SR.rayCircle(P0.x, P0.y, d[0], d[1], CX, CY, RA);
+      if (!a) return;
+      const tIn = Math.max(a[0], tStart);
+      if (kind === 'obs') tEndBase = back;
+      else {
+        const g = SR.rayCircle(P0.x, P0.y, d[0], d[1], CX, CY, R);
+        tEndBase = g && g[0] > tIn ? g[0] : 1e9;
+      }
+      const tauB = this.tau[0];
+      BANDS.forEach((b, bi) => {
+        const off = (bi - 1) * 2.4;
+        const ph = {
+          P0x: P0.x + n[0] * off, P0y: P0.y + n[1] * off, dist: tStart, tStart, tSc: Infinity, tEnd: tEndBase, aer: false, bi, onObs: kind === 'obs',
+          x: 0, y: 0, vx: 0, vy: 0, state: 0, life: 0, trail: [], col: b.col, a: 0, amax: 1, w: 2.4, r: 2.8, basic: true,
+        };
+        if (kind === 'obs') {
+          // 실제 투과율과 같은 확률로 도중에 산란되어 빠져나감
+          const L = back - tIn, tau = this.tau[bi] * this.ms;
+          const pr = 1 - Math.exp(-tau);
+          if (Math.random() < pr) ph.tSc = tIn + (-Math.log(1 - Math.random() * pr) / tau) * L;
+          ph.noEye = true;
+        } else {
+          // P에서 관측자 쪽으로 산란될 확률 ∝ 광학적 두께(파란빛 기준 0.9)
+          if (Math.random() < 0.9 * (this.tau[bi] / tauB)) { ph.tSc = back; ph.toEye = true; }
+        }
+        this.ph.push(ph);
+      });
+    },
+
     update(dt) {
       this.t += dt;
-      this.acc += 125 * dt;
-      while (this.acc >= 1) { this.acc -= 1; this.emit(false); }
-      this.accObs += 16 * dt;
-      while (this.accObs >= 1) { this.accObs -= 1; this.emit(true); }
+      if (this.lv === 'basic') {
+        this.accObs += 0.75 * dt;
+        while (this.accObs >= 1) { this.accObs -= 1; this.emitPacket('obs'); }
+        this.accSky += 0.75 * dt;
+        while (this.accSky >= 1) { this.accSky -= 1; this.emitPacket('sky'); }
+      } else {
+        this.acc += 60 * dt;
+        while (this.acc >= 1) { this.acc -= 1; this.emit(false); }
+        this.accObs += 12 * dt;
+        while (this.accObs >= 1) { this.accObs -= 1; this.emit(true); }
+      }
       const d = this.d;
       const keep = [];
       for (const p of this.ph) {
         if (!this.s.show[BANDS[p.bi].key]) continue;
-        SR.pushTrail(p, p.state === 2 ? 10 : 7);
+        SR.pushTrail(p, p.basic ? 16 : p.state === 2 ? 10 : 7);
         if (p.state === 0) {
           p.dist += SPEED * dt;
           p.a = p.amax * Math.min(1, (p.dist - p.tStart) / 60);
@@ -463,7 +545,8 @@
             p.y = p.P0y + d[1] * p.tSc;
             this.scatter(p);
           } else if (p.dist >= p.tEnd) {
-            if (p.onObs) this.hitEye(p, this.s.sight === 'sun');
+            if (p.onObs) this.hitEye(p, this.sightMode() === 'sun');
+            else if (p.basic) this.fx.add({ type: 'ring', x: p.x, y: p.y, col: p.col, r0: 2, r1: 6, dur: 0.3, lw: 1.2, a: 0.5 });
             continue;
           } else {
             p.x = p.P0x + d[0] * p.dist;
@@ -476,7 +559,7 @@
           if (p.state === 2) {
             if (Math.hypot(p.x - E.x, p.y - E.y) < 6) { this.hitEye(p, true); continue; }
           } else {
-            p.a = Math.max(0, 0.85 - p.life * 0.4);
+            p.a = Math.max(0, 0.85 - p.life * (p.basic ? 0.9 : 0.4));
             if (p.a <= 0) continue;
             const dx = p.x - CX, dy = p.y - CY;
             if (dx * dx + dy * dy < R * R) continue;
@@ -492,6 +575,10 @@
     },
 
     hitEye(p, seen) {
+      if (this.lv === 'basic') {
+        this.fx.add({ type: 'ring', x: E.x, y: E.y, col: p.col, r0: 3, r1: 10, dur: 0.4, lw: 2 });
+        return;
+      }
       if (!seen) return;
       this.eyeHits[p.bi] += 1;
       this.eyeFlash = 1;
@@ -533,7 +620,7 @@
         c.fillStyle = 'rgba(200,225,255,0.38)';
         c.fillRect(x, y, 1.4, 1.4);
       }
-      const nA = Math.round(this.s.aer * 1.7);
+      const nA = this.lv === 'basic' ? 0 : Math.round(this.s.aer * 1.7);
       const rnd2 = SR.rng(23);
       for (let i = 0; i < nA; i++) {
         const zz = -48 * Math.log(1 - rnd2() * (1 - Math.exp(-HA / 48)));
@@ -561,7 +648,7 @@
     },
 
     draw(ctx) {
-      const key = this.s.h + '|' + this.s.aer + '|' + this.s.sight + '|' + this.s.sightEl;
+      const key = this.s.h + '|' + this.s.aer + '|' + this.sightMode() + '|' + this.s.sightEl + '|' + this.lv;
       if (this.bgKey !== key || !this.bg || this.bg.ps !== this.app.ps) {
         this.bg = SR.makeLayer(this.bg, this.app.ps, (c) => this.drawBackground(c));
         this.bgKey = key;
@@ -569,11 +656,12 @@
       ctx.drawImage(this.bg, 0, 0, SR.W, SR.H);
       const d = this.d, n = this.n;
 
+      const basic = this.lv === 'basic';
       // 평행하게 들어오는 햇빛(희미한 선)
       ctx.lineWidth = 1;
       ctx.strokeStyle = 'rgba(255,248,225,0.06)';
       ctx.beginPath();
-      for (let k = -340; k <= 320; k += 34) {
+      for (let k = -340; k <= 320; k += basic ? 1e9 : 34) {
         const sx = this.S.x + n[0] * k, sy = this.S.y + n[1] * k;
         ctx.moveTo(sx, sy);
         ctx.lineTo(sx + d[0] * 1400, sy + d[1] * 1400);
@@ -639,16 +727,17 @@
       SR.drawSun(ctx, this.S.x, this.S.y, 22, [255, 248, 230]);
       SR.label(ctx, '태양 (백색광)', this.S.x, this.S.y - 36, { size: 17, align: 'center', color: '#fff3cf' });
 
+      if (basic) this.drawBasicPaths(ctx);
       // 시선
       ctx.setLineDash([2, 6]);
       ctx.lineWidth = 2;
-      ctx.strokeStyle = this.s.sight === 'sky' ? 'rgba(140,210,255,0.9)' : 'rgba(255,220,150,0.9)';
+      ctx.strokeStyle = this.sightMode() === 'sky' ? 'rgba(140,210,255,0.9)' : 'rgba(255,220,150,0.9)';
       ctx.beginPath();
       ctx.moveTo(E.x, E.y);
       ctx.lineTo(this.sightEnd.x, this.sightEnd.y);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (this.s.sight === 'sky') {
+      if (this.sightMode() === 'sky' && !basic) {
         ctx.fillStyle = 'rgba(120,200,255,0.07)';
         ctx.beginPath();
         const vx = this.v[0], vy = this.v[1];
@@ -672,7 +761,7 @@
       // 관측자
       SR.drawObserver(ctx, E.x, GY, 1, 1);
       const hits = this.eyeHits, tot = hits[0] + hits[1] + hits[2];
-      if (tot > 0.15) {
+      if (tot > 0.15 && !basic) {
         let r = 0, g = 0, b = 0;
         BANDS.forEach((bd, i) => { r += bd.col[0] * hits[i]; g += bd.col[1] * hits[i]; b += bd.col[2] * hits[i]; });
         const m = Math.max(r, g, b);
@@ -696,11 +785,69 @@
       ctx.fillStyle = 'rgba(200,225,255,0.9)';
       ctx.fillRect(24, SR.H - 56, 3, 3);
       SR.label(ctx, '공기 분자: 짧은 파장일수록 강하게 산란', 36, SR.H - 48, { size: 16, color: 'rgba(210,225,245,0.9)' });
-      ctx.fillStyle = 'rgba(214,190,150,0.9)';
-      ctx.beginPath(); ctx.arc(26, SR.H - 25, 3.2, 0, 6.2832); ctx.fill();
-      SR.label(ctx, '먼지·에어로졸: 파장 차이가 작고 주로 앞쪽으로 산란', 36, SR.H - 19, { size: 16, color: 'rgba(225,210,185,0.9)' });
+      if (!basic) {
+        ctx.fillStyle = 'rgba(214,190,150,0.9)';
+        ctx.beginPath(); ctx.arc(26, SR.H - 25, 3.2, 0, 6.2832); ctx.fill();
+        SR.label(ctx, '먼지·에어로졸: 파장 차이가 작고 주로 앞쪽으로 산란', 36, SR.H - 19, { size: 16, color: 'rgba(225,210,185,0.9)' });
+        this.drawView(ctx);
+      } else {
+        SR.label(ctx, '파랑·초록·빨강 알갱이가 함께 출발한 것 = 백색광', 24, SR.H - 19, { size: 16, color: 'rgba(235,240,250,0.9)' });
+        this.drawCard(ctx);
+      }
+    },
 
-      this.drawView(ctx);
+    // 기본 모드: 하늘빛이 눈에 들어오는 대표 경로
+    drawBasicPaths(ctx) {
+      const d = this.d, P = this.P;
+      const back = ((this.S.x - P.x) * d[0] + (this.S.y - P.y) * d[1]);
+      const sx = P.x + d[0] * back, sy = P.y + d[1] * back;
+      ctx.strokeStyle = 'rgba(255,250,235,0.35)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(P.x, P.y); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,240,210,0.16)';
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath(); ctx.moveTo(P.x, P.y); ctx.lineTo(P.x + d[0] * 160, P.y + d[1] * 160); ctx.stroke();
+      ctx.setLineDash([]);
+      // 산란 지점 → 눈
+      ctx.strokeStyle = 'rgba(110,175,255,0.8)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([9, 6]);
+      ctx.beginPath(); ctx.moveTo(P.x, P.y); ctx.lineTo(E.x + (P.x - E.x) * 0.06, E.y + (P.y - E.y) * 0.06); ctx.stroke();
+      ctx.setLineDash([]);
+      const an = Math.atan2(E.y - P.y, E.x - P.x);
+      SR.arrowHead(ctx, E.x + (P.x - E.x) * 0.05, E.y + (P.y - E.y) * 0.05, an, 12, 'rgba(110,175,255,0.95)');
+      ctx.strokeStyle = SR.ACCENT.scatter;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(P.x, P.y, 9, 0, 6.2832); ctx.stroke();
+      SR.label(ctx, '산란 지점', P.x + 14, P.y - 12, { size: 16, color: SR.ACCENT.scatter, bg: 'rgba(5,12,28,0.7)' });
+      const mx = (P.x + E.x) / 2, my = (P.y + E.y) / 2;
+      SR.label(ctx, '산란된 파란빛 → 눈', mx + 16, my + 4, { size: 16, color: '#9cc8ff', bg: 'rgba(5,12,28,0.7)' });
+    },
+
+    // 기본 모드: 관측 결과(태양의 색 / 하늘의 색)
+    drawCard(ctx) {
+      const x = 880, y = 14, w = 306, h = 178;
+      ctx.fillStyle = 'rgba(5,12,28,0.8)';
+      SR.roundRect(ctx, x, y, w, h, 12); ctx.fill();
+      ctx.strokeStyle = 'rgba(150,190,255,0.35)'; ctx.lineWidth = 1.2; ctx.stroke();
+      SR.label(ctx, '관측자에게 보이는 색', x + 14, y + 26, { size: 16, weight: 700 });
+      const c1 = { x: x + 62, y: y + 82 }, c2 = { x: x + 228, y: y + 82 };
+      const glow = SR.clamp(this.sunLum * 1.5, 0.4, 1);
+      SR.drawSun(ctx, c1.x, c1.y, 24, this.sunCol, glow);
+      const sky = this.skyCol;
+      ctx.fillStyle = SR.css(sky);
+      ctx.beginPath(); ctx.arc(c2.x, c2.y, 26, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.stroke();
+      SR.label(ctx, '태양', c1.x, y + 132, { size: 15, align: 'center' });
+      SR.label(ctx, '하늘(태양 반대쪽)', c2.x, y + 132, { size: 15, align: 'center' });
+      // 태양빛에 남은 색 (막대, 수치 없음)
+      const bx = x + 26, by = y + 166;
+      SR.label(ctx, '태양빛에 남은 색', bx - 12, by + 1, { size: 12, color: 'rgba(210,222,240,0.8)' });
+      BANDS.forEach((b, i) => {
+        const hh = 22 * this.trans[i];
+        ctx.fillStyle = SR.css(b.col, 0.95);
+        ctx.fillRect(bx + 100 + i * 14, by - hh, 10, hh);
+      });
     },
 
     drawView(ctx) {
@@ -724,7 +871,7 @@
       ctx.lineWidth = 1.5;
       SR.roundRect(ctx, x, y, w, h, 10);
       ctx.stroke();
-      const t = this.s.sight === 'sky' ? `관측자의 시야 · 태양 반대쪽 하늘 (고도 ${this.s.sightEl}°)` : `관측자의 시야 · 태양 쪽 (고도 ${this.s.h}°)`;
+      const t = this.sightMode() === 'sky' ? `관측자의 시야 · 태양 반대쪽 하늘 (고도 ${this.s.sightEl}°)` : `관측자의 시야 · 태양 쪽 (고도 ${this.s.h}°)`;
       SR.label(ctx, t, x + 10, y + 20, { size: 15, color: '#eaf2ff', bg: 'rgba(5,12,28,0.6)' });
       // 시야 중심 표시
       ctx.strokeStyle = 'rgba(255,255,255,0.55)';

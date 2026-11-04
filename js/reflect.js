@@ -7,8 +7,9 @@
 
   // 반사율 범위: 첨부 학습지 값 그대로
   const SURF = {
-    thick: { name: '두꺼운 구름', min: 70, max: 90, def: 80, cloud: true, sw: 'linear-gradient(160deg,#ffffff,#b9c4d6)' },
-    thin: { name: '얇은 구름', min: 25, max: 30, def: 27, cloud: true, sw: 'linear-gradient(160deg,#cfe0f5,#5f86b8)' },
+    // 구름의 흡수(abs)는 학습지에 없는 값이라 대표값으로 둠 — 두꺼운 구름 약 10%, 얇은 구름 약 3%
+    thick: { name: '두꺼운 구름', min: 70, max: 90, def: 80, abs: 10, cloud: true, sw: 'linear-gradient(160deg,#ffffff,#b9c4d6)' },
+    thin: { name: '얇은 구름', min: 25, max: 30, def: 27, abs: 3, cloud: true, sw: 'linear-gradient(160deg,#cfe0f5,#5f86b8)' },
     snow: { name: '눈', min: 50, max: 90, def: 80, sw: 'linear-gradient(160deg,#ffffff,#cfe1f2)' },
     wet: { name: '젖은 흙', min: 15, max: 25, def: 20, sw: 'linear-gradient(160deg,#6b5040,#2f2119)' },
     grass: { name: '풀', min: 5, max: 25, def: 15, sw: 'linear-gradient(160deg,#5fa04e,#23502a)' },
@@ -19,6 +20,14 @@
   const C_IN = [255, 236, 170];
   const C_REF = [150, 255, 230];
 
+  const GROUND = ['snow', 'wet', 'grass', 'sand'];
+  // 입사 100의 행방: 반사 r, 흡수 a, 투과 t (지표는 투과 0)
+  function split(type, r) {
+    const sf = SURF[type];
+    if (!sf.cloud) return { r, a: 100 - r, t: 0 };
+    const a = Math.min(sf.abs, 100 - r);
+    return { r, a, t: 100 - r - a };
+  }
   function surfY(type) { return SURF[type].cloud ? (type === 'thick' ? 300 : 330) : 515; }
 
   const M = {
@@ -27,8 +36,14 @@
     accent: SR.ACCENT.reflect,
     defaults: { compare: true, a: 'snow', b: 'grass' },
 
+    principleBasic: [
+      '같은 양(100)의 햇빛이 서로 다른 지표에 도달한다.',
+      '반사율만큼은 반사되어 되돌아가고, 나머지는 지표에 흡수된다.',
+      '반사율이 높은 눈은 적게 흡수하고, 반사율이 낮은 풀은 많이 흡수해 더 잘 데워진다.',
+    ],
+
     principle: [
-      '물체에 도달한 태양 복사 에너지 중 일부는 되돌아 나가고(반사), 나머지는 물체에 흡수된다(구름은 일부가 통과하기도 한다).',
+      '물체에 도달한 태양 복사 에너지 중 일부는 되돌아 나가고(반사), 지표에서는 나머지가 흡수된다. 구름은 반사·흡수 외에 일부를 통과(투과)시킨다.',
       '반사율(반사되는 에너지 ÷ 입사 에너지)은 구름의 두께나 지표의 상태(눈, 흙, 식물 등)에 따라 다르다.',
       '반사율이 높은 표면일수록 같은 양의 햇빛을 받아도 흡수하는 에너지가 적어 덜 데워진다.',
     ],
@@ -50,6 +65,7 @@
     init(app) {
       this.app = app;
       this.s = { ...this.defaults, ra: SURF.snow.def, rb: SURF.grass.def };
+      this.lv = app.level;
       this.fx = new SR.Effects();
       this.buildPanel();
       this.reset();
@@ -62,12 +78,43 @@
       this.t = 0;
     },
     newPane() {
-      return { acc: 0, err: 0, n: 0, r: 0, a: 0, heat: 0, hold: 0 };
+      return { acc: 0, n: 0, r: 0, a: 0, t: 0, heat: 0, hold: 0, seq: null };
+    },
+    cmp() { return this.lv === 'basic' ? true : this.s.compare; },
+    // 100개 묶음의 행방을 정확한 개수로 섞어 둠(반사 r개, 흡수 a개, 투과 t개)
+    makeSeq(i) {
+      const P = this.paneInfo(i);
+      const f = split(P.type, P.r);
+      const seq = [];
+      for (let k = 0; k < f.r; k++) seq.push('r');
+      for (let k = 0; k < f.a; k++) seq.push('a');
+      for (let k = 0; k < f.t; k++) seq.push('t');
+      for (let k = seq.length - 1; k > 0; k--) { const j = (Math.random() * (k + 1)) | 0; [seq[k], seq[j]] = [seq[j], seq[k]]; }
+      return seq;
+    },
+    setLevel(lv) {
+      this.lv = lv;
+      if (lv === 'basic') {
+        // 기본 모드는 지표 비교에 집중: 구름이 선택되어 있으면 지표로 바꿈
+        let msg = '';
+        if (SURF[this.s.a].cloud) { this.setType('a', 'snow', true); msg = '기본 모드에서는 지표끼리 비교합니다. '; }
+        if (SURF[this.s.b].cloud) { this.setType('b', 'grass', true); msg = '기본 모드에서는 지표끼리 비교합니다. '; }
+        if (msg) this.change = msg + '구름의 반사·흡수·투과는 심화 탐구에서 볼 수 있습니다.';
+      }
+      this.syncB();
+      this.ph = [];
+      this.fx.clear();
+      this.panes.forEach((p, i) => this.resetCounts(i));
+      this.bgKey = null;
+      this.onChange();
+    },
+    syncB() {
+      if (this.secB) this.secB.style.display = this.cmp() ? '' : 'none';
     },
     resetCounts(i) {
       const p = this.panes[i];
       if (!p) return;
-      Object.assign(p, { n: 0, r: 0, a: 0, err: 0, hold: 0 });
+      Object.assign(p, { n: 0, r: 0, a: 0, t: 0, hold: 0, seq: null });
       this.ph = this.ph.filter((q) => q.pane !== i);
     },
 
@@ -96,7 +143,7 @@
         options: [{ value: false, label: '한 대상' }, { value: true, label: '두 대상 비교' }],
         onChange: (v) => {
           this.s.compare = v === true || v === 'true';
-          this.secB.style.display = this.s.compare ? '' : 'none';
+          this.syncB();
           this.reset();
           this.change = this.s.compare ? '화면을 좌우로 나누어 두 대상을 비교합니다.' : `${SURF[this.s.a].name} 하나만 자세히 봅니다.`;
           this.onChange();
@@ -113,6 +160,7 @@
       const pw = SR.el('div', 'ctl');
       pw.append(SR.el('div', 'ctl-label', '빠른 비교'), pre);
       s0.appendChild(pw);
+      s0.classList.add('adv-only');
 
       const mk = (which, title) => {
         const sec = ui.section(title);
@@ -122,6 +170,8 @@
           options: ORDER.map((k) => ({ value: k, label: SURF[k].name, swatch: SURF[k].sw })),
           onChange: (v) => this.setType(which, v),
         });
+        // 기본 모드에서는 구름 버튼을 숨김(지표 비교에 집중)
+        seg.el.querySelectorAll('.seg-btn').forEach((b) => { if (SURF[b.dataset.v].cloud) b.classList.add('adv-only'); });
         const key = which === 'a' ? 'ra' : 'rb';
         const sl = ui.slider({
           label: '반사율', min: SURF[this.s[which]].min, max: SURF[this.s[which]].max, value: this.s[key], unit: '%',
@@ -132,12 +182,18 @@
             this.resetCounts(which === 'a' ? 0 : 1);
             if (base != null && base !== v) {
               const nm = SURF[this.s[which]].name;
-              const lost = SURF[this.s[which]].cloud ? '반사되지 않는 에너지(투과·흡수)' : '흡수 에너지';
-              this.change = `${nm}의 반사율을 ${base}% → ${v}%로 ${v > base ? '높이자' : '낮추자'} 반사 에너지는 ${base} → ${v}, ${lost}는 ${100 - base} → ${SR.j(100 - v, '로')} 바뀌었습니다.`;
+              if (SURF[this.s[which]].cloud) {
+                const f0 = split(this.s[which], base), f1 = split(this.s[which], v);
+                this.change = `${nm}의 반사율을 ${base}% → ${v}%로 ${v > base ? '높이자' : '낮추자'} 반사 ${f0.r} → ${f1.r}, 흡수 ${f0.a} → ${f1.a}, 투과 ${f0.t} → ${SR.j(f1.t, '로')} 바뀌었습니다.`;
+              } else {
+                this.change = `${nm}의 반사율을 ${base}% → ${v}%로 ${v > base ? '높이자' : '낮추자'} 반사 에너지는 ${base} → ${v}, 흡수 에너지는 ${100 - base} → ${SR.j(100 - v, '로')} 바뀌었습니다.`;
+              }
             }
             this.onChange();
           },
         });
+        const hn = sl.el.querySelector('.ctl-hint');
+        if (hn) hn.classList.add('adv-only');
         sec.append(seg.el, sl.el);
         this.ctl[which] = seg;
         this.ctl[key] = sl;
@@ -146,13 +202,14 @@
       this.secA = mk('a', '대상 A (왼쪽)');
       this.secB = mk('b', '대상 B (오른쪽)');
 
-      const s3 = ui.section('학습지 반사율 표');
+      const s3 = ui.section('학습지 반사율 표', '구름의 흡수율은 학습지에 없어 대표값(두꺼운 구름 약 10%, 얇은 구름 약 3%)을 썼습니다. 나머지는 구름을 통과합니다.');
+      s3.classList.add('adv-only');
       const tb = SR.el('table', 'ro-table');
       tb.innerHTML = '<thead><tr><th>대상</th><th>반사율(%)</th></tr></thead><tbody>' +
         ORDER.map((k) => `<tr data-k="${k}"><td>${SURF[k].name}<span class="tag" data-tag="${k}"></span></td><td>${SURF[k].min}~${SURF[k].max}</td></tr>`).join('') + '</tbody>';
       this.table = tb;
       s3.appendChild(tb);
-      const foot = SR.el('div', 'pnl-foot');
+      const foot = SR.el('div', 'pnl-foot adv-only');
       foot.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
       p.append(s0, this.secA, this.secB, s3, foot);
       this.panel = p;
@@ -181,7 +238,7 @@
       if (!this.table) return;
       this.table.querySelectorAll('tr[data-k]').forEach((tr) => {
         const k = tr.dataset.k;
-        const isA = this.s.a === k, isB = this.s.compare && this.s.b === k;
+        const isA = this.s.a === k, isB = this.cmp() && this.s.b === k;
         tr.classList.toggle('hl', isA || isB);
         tr.querySelector('.tag').textContent = isA && isB ? 'A·B' : isA ? 'A' : isB ? 'B' : '';
         tr.querySelector('.tag').style.display = isA || isB ? '' : 'none';
@@ -198,11 +255,13 @@
     /* ---------------- 설명 ---------------- */
     live() {
       const one = (k, r) => {
-        const c = SURF[k].cloud;
-        return `<b>${SURF[k].name}(반사율 ${r}%)</b>: 입사 에너지 100 중 <b>${r}</b>${SR.j(r, '은').slice(String(r).length)} 반사되어 위로 되돌아가고, <b>${100 - r}</b>${SR.j(100 - r, '은').slice(String(100 - r).length)} ${c ? '구름을 통과하거나 구름에 흡수됩니다' : '지표에 흡수되어 지표를 데웁니다'}.`;
+        const f = split(k, r);
+        const ps = (n) => SR.j(n, '은').slice(String(n).length);
+        if (SURF[k].cloud) return `<b>${SURF[k].name}(반사율 ${r}%)</b>: 입사 100 중 <b>${f.r}</b>${ps(f.r)} 반사, <b>${f.a}</b>${ps(f.a)} 구름에 흡수, <b>${f.t}</b>${ps(f.t)} 구름을 통과합니다.`;
+        return `<b>${SURF[k].name}(반사율 ${r}%)</b>: 입사 에너지 100 중 <b>${r}</b>${ps(r)} 반사되어 위로 되돌아가고, <b>${100 - r}</b>${ps(100 - r)} 지표에 흡수되어 지표를 데웁니다.`;
       };
       let t = one(this.s.a, this.s.ra);
-      if (this.s.compare) {
+      if (this.cmp()) {
         t += ' ' + one(this.s.b, this.s.rb);
         const A = this.s.ra, B = this.s.rb;
         if (A !== B) {
@@ -212,21 +271,30 @@
       }
       return { now: t, change: this.change };
     },
+    liveBasic() {
+      const A = this.s.ra, B = this.s.rb, a = SURF[this.s.a].name, b = SURF[this.s.b].name;
+      let t = `같은 입사 100 → <b>${a}</b> 반사 ${A} · 흡수 ${100 - A}, <b>${b}</b> 반사 ${B} · 흡수 ${100 - B}. `;
+      if (A !== B) {
+        const hi = A > B ? a : b, lo = A > B ? b : a;
+        t += `반사율이 높은 <b>${SR.j(hi, '이')}</b> ${Math.abs(A - B)}만큼 더 반사하고, <b>${SR.j(lo, '은')}</b> 그만큼 더 흡수해 더 잘 데워집니다.`;
+      } else t += '반사율이 같아 반사·흡수량도 같습니다.';
+      return { now: t, change: this.change };
+    },
 
     /* ---------------- 장면 배치 ---------------- */
     paneRect(i) {
-      if (!this.s.compare) return { x: 0, w: SR.W };
+      if (!this.cmp()) return { x: 0, w: SR.W };
       return { x: i * 600, w: 600 };
     },
     paneInfo(i) {
       const R = this.paneRect(i);
       const type = i === 0 ? this.s.a : this.s.b;
       const r = i === 0 ? this.s.ra : this.s.rb;
-      const big = !this.s.compare;
+      const big = !this.cmp();
       const sun = { x: R.x + (big ? 110 : 76), y: big ? 92 : 84 };
       const tgt = { x: R.x + R.w * (big ? 0.46 : 0.5), y: surfY(type) };
       const spread = big ? 170 : 110;
-      return { R, type, r, sun, tgt, spread, big, cloud: !!SURF[type].cloud };
+      return { R, type, r, sun, tgt, spread, big, cloud: !!SURF[type].cloud, f: split(type, r) };
     },
 
     /* ---------------- 애니메이션 ---------------- */
@@ -251,13 +319,10 @@
     land(q) {
       const pane = this.panes[q.pane];
       const P = this.paneInfo(q.pane);
-      if (pane.n >= 100) Object.assign(pane, { n: 0, r: 0, a: 0, err: 0 });
+      if (pane.n >= 100 || !pane.seq) Object.assign(pane, { n: 0, r: 0, a: 0, t: 0, seq: this.makeSeq(q.pane) });
+      const out = pane.seq[pane.n];
       pane.n += 1;
-      // 오차 확산: 100개마다 반사율과 정확히 같은 개수가 반사됨
-      pane.err += P.r;
-      const refl = pane.err >= 100;
-      if (refl) pane.err -= 100;
-      if (refl) {
+      if (out === 'r') {
         pane.r += 1;
         const th = Math.asin(2 * Math.random() - 1) * 0.85;
         q.vx = Math.sin(th) * SPEED;
@@ -267,10 +332,14 @@
         q.trail.length = 0;
         this.fx.add({ type: 'ring', x: q.x, y: q.y, col: C_REF, r0: 2, r1: 12, dur: 0.45, lw: 1.8 });
       } else {
-        pane.a += 1;
         q.trail.length = 0;
-        if (P.cloud) {
-          q.state = 3; // 구름 통과(일부 흡수)
+        if (out === 'a') pane.a += 1; else pane.t += 1;
+        if (P.cloud && out === 'a') {
+          q.state = 4; // 구름 속 물방울에 흡수
+          q.vx *= 0.2; q.vy *= 0.2; q.y0 = q.y; q.life = 0;
+          this.fx.add({ type: 'heat', x: q.x, y: q.y + 26, r1: 18, dur: 0.9 });
+        } else if (P.cloud) {
+          q.state = 3; // 구름 통과(투과)
           const th = SR.rand(-0.5, 0.5);
           q.vx = Math.sin(th) * SPEED * 0.8;
           q.vy = Math.cos(th) * SPEED * 0.8;
@@ -292,10 +361,10 @@
 
     update(dt) {
       this.t += dt;
-      const np = this.s.compare ? 2 : 1;
+      const np = this.cmp() ? 2 : 1;
       for (let i = 0; i < np; i++) {
         const pn = this.panes[i];
-        pn.acc += 24 * dt;
+        pn.acc += (this.lv === 'basic' ? 5 : 11) * dt;
         while (pn.acc >= 1) { pn.acc -= 1; this.emit(i); }
         pn.heat = Math.max(0, pn.heat - dt * 0.6);
         pn.hold = Math.max(0, pn.hold - dt);
@@ -303,7 +372,7 @@
       const keep = [];
       for (const q of this.ph) {
         if (q.pane >= np) continue;
-        SR.pushTrail(q, 8);
+        SR.pushTrail(q, this.lv === 'basic' ? 14 : 9);
         q.x += q.vx * dt;
         q.y += q.vy * dt;
         q.life += dt;
@@ -316,6 +385,11 @@
           q.a = Math.max(0, 1 - k);
           q.col = [255, Math.round(236 - 120 * k), Math.round(170 - 140 * k)].map((v) => SR.clamp(v, 0, 255));
           if (k >= 1) continue;
+        } else if (q.state === 4) {
+          q.life += dt;
+          q.a = Math.max(0, 1 - q.life * 2);
+          q.col = [255, 150, 70];
+          if (q.a <= 0) continue;
         } else if (q.state === 3) {
           const k = (q.y - q.y0) / (q.depth + 220);
           q.a = Math.max(0, 0.55 - k * 0.55);
@@ -444,7 +518,7 @@
     },
 
     drawBackground(c) {
-      const np = this.s.compare ? 2 : 1;
+      const np = this.cmp() ? 2 : 1;
       for (let i = 0; i < np; i++) {
         const P = this.paneInfo(i);
         const R = P.R;
@@ -486,30 +560,46 @@
         ctx.closePath();
         ctx.fill();
       };
+      const f = P.f;
+      const tag = (txt, x, y, col) => SR.label(ctx, txt, x, y, { size: P.big ? 19 : 17, weight: 800, color: SR.css(col), bg: 'rgba(4,10,24,0.7)', align: 'center', base: 'middle' });
       const sx = S.x + Math.cos(ang) * 40, sy = S.y + Math.sin(ang) * 40;
-      band(sx, sy, T.x - Math.cos(ang) * 6, ty - Math.sin(ang) * 6, 100 * k, C_IN, 0.16);
-      // 반사: 입사의 거울 방향 쪽으로
-      const rx = T.x + Math.cos(ang) * (P.big ? 250 : 170), ry = ty - Math.sin(ang) * (P.big ? 250 : 170);
-      band(T.x + Math.cos(ang) * 8, ty - 8, rx, ry, P.r * k, C_REF, 0.2);
+      const ix = T.x - Math.cos(ang) * 6, iy = ty - Math.sin(ang) * 6;
+      band(sx, sy, ix, iy, 100 * k, C_IN, 0.22);
+      tag('입사 100', (sx + ix) / 2 - 58, (sy + iy) / 2 + 8, C_IN);
+      // 반사: 입사의 거울 방향 쪽으로 (화살표 굵기 ∝ 반사 에너지)
+      const L = P.big ? 250 : 170;
+      const rx = T.x + Math.cos(ang) * L, ry = ty - Math.sin(ang) * L;
+      band(T.x + Math.cos(ang) * 8, ty - 8, rx, ry, f.r * k, C_REF, 0.3);
+      tag(`반사 ${f.r}`, (T.x + rx) / 2 + 40 + (f.r * k) / 2, (ty + ry) / 2 + 10, C_REF);
       if (P.cloud) {
-        band(T.x, ty + 20, T.x + 20, 590, (100 - P.r) * k, [200, 210, 230], 0.13);
+        if (f.a > 0) {
+          ctx.fillStyle = `rgba(255,130,60,${0.25 + f.a / 60})`;
+          ctx.beginPath(); ctx.arc(T.x, ty + 40, 6 + f.a * 1.2, 0, 6.2832); ctx.fill();
+          tag(`흡수 ${f.a}`, T.x - 90, ty + 46, [255, 150, 80]);
+        }
+        band(T.x, ty + 60, T.x + 20, 590, f.t * k, [200, 210, 230], 0.2);
+        if (f.t > 0) tag(`투과 ${f.t}`, T.x + 80, 545, [205, 215, 235]);
       } else {
-        band(T.x, T.y + 4, T.x + 14, Math.min(SR.H - 6, T.y + 110), (100 - P.r) * k, [255, 130, 60], 0.22);
+        const by = Math.min(SR.H - 30, T.y + 110);
+        band(T.x, T.y + 4, T.x + 14, by, f.a * k, [255, 130, 60], 0.32);
+        tag(`흡수 ${f.a}`, T.x + 14 + (f.a * k) / 2 + 52, T.y + 66, [255, 150, 80]);
       }
     },
 
     drawBars(ctx, P, pane) {
       const big = P.big;
-      const bw = big ? 54 : 40, gap = big ? 22 : 14, hmax = big ? 170 : 130;
-      const x0 = P.R.x + P.R.w - (bw * 3 + gap * 2) - (big ? 50 : 26);
+      const f = P.f;
+      const nb = P.cloud ? 4 : 3;
+      const bw = big ? 54 : nb === 4 ? 32 : 40, gap = big ? 22 : 12, hmax = big ? 170 : 130;
+      const x0 = P.R.x + P.R.w - (bw * nb + gap * (nb - 1)) - (big ? 50 : 26);
       const y0 = big ? 230 : 196;
-      const vals = [100, P.r, 100 - P.r];
-      const cols = [C_IN, C_REF, P.cloud ? [190, 200, 220] : [255, 138, 61]];
-      const names = ['입사', '반사', P.cloud ? '투과·흡수' : '흡수'];
+      const vals = P.cloud ? [100, f.r, f.a, f.t] : [100, f.r, f.a];
+      const cols = P.cloud ? [C_IN, C_REF, [255, 138, 61], [190, 200, 220]] : [C_IN, C_REF, [255, 138, 61]];
+      const names = P.cloud ? ['입사', '반사', '흡수', '투과'] : ['입사', '반사', '흡수'];
       ctx.fillStyle = 'rgba(4,10,24,0.55)';
-      SR.roundRect(ctx, x0 - 14, y0 - hmax - 44, bw * 3 + gap * 2 + 28, hmax + 84, 12);
+      SR.roundRect(ctx, x0 - 14, y0 - hmax - 44, bw * nb + gap * (nb - 1) + 28, hmax + (this.lv === 'basic' ? 60 : 84), 12);
       ctx.fill();
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < nb; i++) {
         const x = x0 + i * (bw + gap);
         const h = (vals[i] / 100) * hmax;
         ctx.fillStyle = 'rgba(255,255,255,0.07)';
@@ -517,21 +607,22 @@
         ctx.fillStyle = SR.css(cols[i], 0.92);
         ctx.fillRect(x, y0 - h, bw, h);
         SR.label(ctx, String(vals[i]), x + bw / 2, y0 - h - 8, { size: big ? 22 : 19, align: 'center', weight: 800, color: SR.css(cols[i]) });
-        SR.label(ctx, names[i], x + bw / 2, y0 + 22, { size: P.cloud && i === 2 ? (big ? 15 : 13) : big ? 17 : 15, align: 'center', color: '#dfe8f7' });
+        SR.label(ctx, names[i], x + bw / 2, y0 + 22, { size: big ? 17 : 15, align: 'center', color: '#dfe8f7' });
       }
+      if (this.lv === 'basic') return;
       // 애니메이션 누적 개수 (100개 묶음)
-      const t = `빛 묶음 ${pane.n}/100 · 반사 ${pane.r} · ${P.cloud ? '투과·흡수' : '흡수'} ${pane.a}`;
-      SR.label(ctx, t, x0 + (bw * 3 + gap * 2) / 2, y0 + 48 + (big ? 2 : 0), { size: big ? 15 : 13, align: 'center', color: pane.hold > 0 ? '#ffffff' : 'rgba(210,222,240,0.85)' });
+      const t = `빛 묶음 ${pane.n}/100 · 반사 ${pane.r} · 흡수 ${pane.a}` + (P.cloud ? ` · 투과 ${pane.t}` : '');
+      SR.label(ctx, t, x0 + (bw * nb + gap * (nb - 1)) / 2, y0 + 48 + (big ? 2 : 0), { size: big ? 15 : nb === 4 ? 12 : 13, align: 'center', color: pane.hold > 0 ? '#ffffff' : 'rgba(210,222,240,0.85)' });
     },
 
     draw(ctx) {
-      const key = [this.s.compare, this.s.a, this.s.b, this.s.ra, this.s.rb].join('|');
+      const key = [this.cmp(), this.s.a, this.s.b, this.s.ra, this.s.rb].join('|');
       if (this.bgKey !== key || !this.bg || this.bg.ps !== this.app.ps) {
         this.bg = SR.makeLayer(this.bg, this.app.ps, (c) => this.drawBackground(c));
         this.bgKey = key;
       }
       ctx.drawImage(this.bg, 0, 0, SR.W, SR.H);
-      const np = this.s.compare ? 2 : 1;
+      const np = this.cmp() ? 2 : 1;
       for (let i = 0; i < np; i++) {
         const P = this.paneInfo(i);
         const pane = this.panes[i];
@@ -556,13 +647,22 @@
         ctx.globalCompositeOperation = 'source-over';
         this.drawBars(ctx, P, pane);
         // 이름표
-        const nm = (this.s.compare ? (i === 0 ? 'A  ' : 'B  ') : '') + SURF[P.type].name;
+        const nm = (this.cmp() ? (i === 0 ? 'A  ' : 'B  ') : '') + SURF[P.type].name;
         const ly = P.cloud ? 560 : P.tgt.y + 48;
         SR.label(ctx, nm, P.R.x + 22, ly, { size: P.big ? 26 : 22, weight: 800, color: '#ffffff', bg: 'rgba(4,10,24,0.55)' });
         SR.label(ctx, `반사율 ${P.r}%`, P.R.x + 22, ly + 30, { size: P.big ? 18 : 16, color: SR.ACCENT.reflect, bg: 'rgba(4,10,24,0.55)' });
         ctx.restore();
       }
-      SR.label(ctx, '※ 선택한 대상 하나만 고려한 단순화 모형: 입사 에너지 100 = 반사 + 흡수(구름은 투과 포함)', SR.W / 2, SR.H - 12, { size: 14, align: 'center', color: 'rgba(225,235,250,0.85)', bg: 'rgba(4,10,24,0.6)' });
+      if (this.lv === 'basic' && np === 2) {
+        // 비교 결과 강조
+        const A = this.paneInfo(0), B = this.paneInfo(1);
+        const hi = A.r >= B.r ? A : B, lo = A.r >= B.r ? B : A;
+        const txt = A.r === B.r ? '두 지표의 반사율이 같아 반사·흡수량도 같아요'
+          : `${SR.j(SURF[hi.type].name, '이')} ${Math.abs(A.r - B.r)} 더 반사 · ${SR.j(SURF[lo.type].name, '이')} ${Math.abs(A.r - B.r)} 더 흡수`;
+        SR.label(ctx, txt, SR.W / 2, SR.H - 22, { size: 22, weight: 800, align: 'center', base: 'middle', color: '#ffffff', bg: 'rgba(4,10,24,0.82)' });
+      } else {
+        SR.label(ctx, '※ 선택한 대상 하나만 고려한 단순화 모형 — 지표: 입사 100 = 반사 + 흡수 / 구름: 반사 + 흡수 + 투과', SR.W / 2, SR.H - 12, { size: 14, align: 'center', color: 'rgba(225,235,250,0.85)', bg: 'rgba(4,10,24,0.6)' });
+      }
     },
   };
 

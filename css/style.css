@@ -87,6 +87,23 @@ button { font-family: inherit; }
 .tab[aria-selected="true"] .num { background: rgba(6, 16, 31, 0.2); color: #06101f; }
 .tab-sep { width: 1px; background: var(--line2); margin: 6px 6px; }
 
+/* 기본 모드 / 심화 탐구 */
+.level { display: inline-flex; padding: 3px; border-radius: 999px; border: 1px solid var(--line2); background: rgba(0, 0, 0, 0.25); }
+.level button {
+  border: 0; background: transparent; color: var(--muted); font-size: 15px; font-weight: 700;
+  padding: 7px 14px; border-radius: 999px; cursor: pointer;
+}
+.level button:hover { color: var(--text); }
+.level button.on { background: #e8eef9; color: #06101f; }
+.lv-basic .adv-only { display: none !important; }
+.lv-adv .basic-only { display: none !important; }
+.lv-basic .explain { grid-template-columns: 1fr; }
+.lv-basic .explain.has-quiz { grid-template-columns: minmax(0, 1fr) 500px; }
+.panel .quiz { margin-top: 12px; padding: 10px 12px 12px; }
+.panel .quiz .quiz-q { font-size: 15.5px; }
+.panel .quiz .quiz-opt { font-size: 14px; }
+.panel .quiz .quiz-fb { font-size: 14px; }
+
 /* ---------- 본문 ---------- */
 .main {
   flex: 1 1 0;
@@ -318,6 +335,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--acc); outline-offse
 .quiz-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--acc); letter-spacing: 0.04em; }
 .quiz-q { margin: 2px 0 7px; font-size: 16.5px; font-weight: 700; line-height: 1.45; }
 .quiz-opts { display: flex; flex-direction: column; gap: 4px; }
+.quiz-opts.short { display: grid; grid-template-columns: 1fr 1fr; }
 .quiz-opt {
   display: flex; gap: 9px; align-items: flex-start; text-align: left;
   padding: 5px 10px; border-radius: 10px; border: 1px solid var(--line);
@@ -340,11 +358,11 @@ input[type="range"]:focus-visible { outline: 2px solid var(--acc); outline-offse
 /* ---------- 반응형 ---------- */
 @media (max-width: 1180px) {
   .main { grid-template-columns: minmax(0, 1fr) 300px; padding: 10px 12px 6px; }
-  .explain { grid-template-columns: minmax(0, 1fr) 400px; padding: 6px 12px 14px; }
+  .explain, .lv-basic .explain.has-quiz { grid-template-columns: minmax(0, 1fr) 400px; padding: 6px 12px 14px; }
   .tab { font-size: 15px; padding: 8px 12px; }
 }
 @media (max-width: 1000px) {
-  .explain { grid-template-columns: 1fr; }
+  .explain, .lv-basic .explain.has-quiz { grid-template-columns: 1fr; }
 }
 @media (max-width: 920px) {
   body { min-height: 0; }

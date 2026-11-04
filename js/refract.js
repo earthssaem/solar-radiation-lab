@@ -12,7 +12,7 @@
   const E = { x: CX, y: GY - 28 };
   const HS = 75;               // 밀도 규모 높이(그림 px)
   const NORM = 1 - Math.exp(-HA / HS);
-  const DMAX = 0.1;            // 슬라이더 최대일 때 지표 굴절률 − 1 (실제 대기 ≈ 0.00029)
+  const DVIS = 0.06;           // 그림용: 표준 대기(100%)일 때 지표 굴절률 − 1 (실제 ≈ 0.00029 → 크게 과장)
   const N_REAL = 0.000293;
   const STEP = 2.5;
   const INSET = { x: 846, y: 14, w: 340, h: 176 };
@@ -24,12 +24,19 @@
     if (h < -1) return null;
     return 1.02 / Math.tan((h + 10.3 / (h + 5.11)) * D);
   }
+  const fmtMin = (r) => (r < 1 ? r.toFixed(1) : r.toFixed(0)) + '′';
 
   const M = {
     id: 'refract',
     title: '굴절',
     accent: SR.ACCENT.refract,
-    defaults: { h: 3, dens: 60, wave: true },
+    defaults: { h: 3, dens: 100, wave: true },
+
+    principleBasic: [
+      '대기는 지표에 가까울수록 밀도가 크다.',
+      '햇빛은 대기를 지나며 밀도가 큰 아래쪽으로 조금씩, 연속적으로 휘어진다.',
+      '관측자는 빛이 들어온 방향에 태양이 있다고 보므로, 태양이 실제보다 조금 높게 보인다(지평선 부근에서 가장 큼).',
+    ],
 
     principle: [
       '대기는 지표에 가까울수록 밀도가 크고, 밀도가 클수록 굴절률이 커서 빛이 조금 더 느리게 진행한다.',
@@ -53,6 +60,7 @@
     init(app) {
       this.app = app;
       this.s = { ...this.defaults };
+      this.lv = app.level;
       this.fx = new SR.Effects();
       this.buildPanel();
       this.recompute();
@@ -65,17 +73,41 @@
       this.fx.clear();
     },
 
+    setLevel(lv) {
+      this.lv = lv;
+      this.app.markDirty();
+    },
+    // 실제 대기의 굴절량(분): 굴절량은 공기 밀도에 거의 비례 → 표준 대기 값 × 밀도 비율
+    realR(h) {
+      const r = realRefrArcmin(h);
+      return r == null ? null : r * (this.s.dens / 100);
+    },
+    setDens(v, base) {
+      const pr = this.realR(this.s.h);
+      this.s.dens = v;
+      this.ctl.dens.set(v, true);
+      this.ctl.air.set(v > 0 ? 'on' : 'off', true);
+      this.recompute();
+      if (base != null && base !== v) {
+        this.change = v === 0
+          ? '대기를 없애자(밀도 0) 빛이 휘지 않고 직진해, 실제 위치와 겉보기 위치가 같아졌습니다.'
+          : `대기 밀도를 ${base}% → ${v}%로 바꾸자 빛이 ${v > base ? '더' : '덜'} 휘어, 실제 대기에서의 위치 차이가 ${fmtMin(pr)} → ${SR.j(fmtMin(this.realR(this.s.h)), '로')} 바뀝니다.`;
+      }
+      this.onChange(true);
+    },
+
     restoreDefaults() {
       Object.assign(this.s, this.defaults);
       this.ctl.h.set(this.s.h, true);
       this.ctl.dens.set(this.s.dens, true);
+      this.ctl.air.set('on', true);
       this.change = '';
       this.onChange();
     },
 
     setH(h) {
       const prev = this.s.h;
-      const pd = this.sol ? this.sol.dev : 0;
+      const pd = this.realR(prev) || 0;
       this.s.h = h;
       this.ctl.h.set(h, true);
       this.recompute();
@@ -89,28 +121,29 @@
       const p = SR.el('div', 'pnl');
       this.ctl = {};
       const s1 = ui.section('조건 바꾸기');
+      this.ctl.air = ui.segmented({
+        label: '대기',
+        value: this.s.dens > 0 ? 'on' : 'off',
+        options: [{ value: 'on', label: '대기 있음' }, { value: 'off', label: '대기 없음' }],
+        onChange: (v) => {
+          const base = this.s.dens;
+          this.setDens(v === 'on' ? (this.lastDens || 100) : 0, base);
+        },
+      });
       this.ctl.dens = ui.slider({
-        label: '대기 밀도 차이 (지표 부근 − 상층)', min: 0, max: 100, value: this.s.dens,
-        fmt: (v) => (v === 0 ? '없음(균일)' : v < 35 ? '작음' : v < 70 ? '보통' : '큼'),
-        ends: ['0 (균일한 대기)', '큼'],
-        hint: '효과가 보이도록 굴절률 차이를 실제보다 크게 과장했습니다.',
+        label: '대기 밀도 (표준 대기 = 100%)', min: 0, max: 150, step: 5, value: this.s.dens, unit: '%',
+        ends: ['0 (대기 없음)', '150%'],
+        hint: '굴절량은 공기 밀도에 거의 비례합니다. 그림의 휘어짐은 실제보다 크게 과장했습니다.',
         onInput: (v, base) => {
-          const pd = this.sol ? this.sol.dev : 0;
-          this.s.dens = v;
-          this.recompute();
-          if (base != null && base !== v) {
-            this.change = v === 0
-              ? '밀도 차이를 0으로 하자 대기의 굴절률이 어디서나 같아져 빛이 직진합니다. 실제 위치와 겉보기 위치가 같습니다.'
-              : `밀도 차이를 ${v > base ? '키우자' : '줄이자'} 빛이 ${v > base ? '더 크게' : '덜'} 휘어, 겉보기 위치와 실제 위치의 차이가 ${pd.toFixed(1)}° → ${this.sol.dev.toFixed(1)}°가 되었습니다.`;
-          }
-          this.onChange(true);
+          if (v > 0) this.lastDens = v;
+          this.setDens(v, base);
         },
       });
       this.ctl.h = ui.slider({
         label: '태양의 실제 고도', min: 0, max: 80, value: this.s.h, unit: '°',
         ends: ['지평선', '높음'],
         onInput: (v, base) => {
-          const pd = this.sol ? this.sol.dev : 0;
+          const pd = this.realR(this.s.h) || 0;
           this.s.h = v;
           this.recompute();
           if (base != null && base !== v) this.change = this.describeH(base, v, pd);
@@ -131,19 +164,23 @@
         options: [{ value: 'wave', label: '파면(빛의 앞면) 보기', color: SR.ACCENT.refract }],
         onChange: (st) => { this.s.wave = st.wave; this.app.markDirty(); },
       });
-      s1.append(this.ctl.dens.el, this.ctl.h.el, pw, this.ctl.wave.el);
+      this.ctl.dens.el.classList.add('adv-only');
+      this.ctl.wave.el.classList.add('adv-only');
+      this.ctl.air.el.classList.add('basic-only');
+      s1.append(this.ctl.air.el, this.ctl.h.el, pw, this.ctl.dens.el, this.ctl.wave.el);
 
-      const s2 = ui.section('측정값');
+      const s2 = ui.section('실제 대기에서 계산한 값', '그림의 각도가 아니라 대기차 근사식(Sæmundsson)으로 계산합니다.');
       const dl = SR.el('dl', 'ro-list');
       dl.innerHTML = `
-        <dt><i style="background:#ffd166"></i>실제 고도</dt><dd data-k="h"></dd>
-        <dt><i style="background:${SR.ACCENT.refract}"></i>겉보기 고도 (모형)</dt><dd data-k="e"></dd>
-        <dt class="sum">위치 차이 (모형, 과장)</dt><dd class="sum" data-k="dev"></dd>
-        <dt>실제 대기라면</dt><dd data-k="real"></dd>`;
+        <dt><i style="background:#ffd166"></i>태양의 실제 고도</dt><dd data-k="h"></dd>
+        <dt><i style="background:${SR.ACCENT.refract}"></i>굴절로 높아지는 양</dt><dd data-k="real"></dd>
+        <dt>겉보기 고도</dt><dd data-k="e"></dd>
+        <dt class="sum">그림의 과장 배율</dt><dd class="sum" data-k="ex"></dd>`;
       this.ro = dl;
       s2.appendChild(dl);
-      s2.appendChild(SR.el('p', 'ctl-hint', '‘실제 대기라면’은 표준 대기 조건의 대기차 공식(Sæmundsson)으로 계산한 값입니다. 태양의 겉보기 지름은 약 32′(0.53°)입니다.'));
-      const foot = SR.el('div', 'pnl-foot');
+      s2.appendChild(SR.el('p', 'ctl-hint', '1° = 60′. 태양의 겉보기 지름은 약 32′(0.53°)입니다. 그림의 휘어진 각도는 보기 쉽게 키운 것이므로 겉보기 고도로 읽지 않습니다.'));
+      s2.classList.add('adv-only');
+      const foot = SR.el('div', 'pnl-foot adv-only');
       foot.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
       p.append(s1, s2, foot);
       this.panel = p;
@@ -158,12 +195,13 @@
 
     describeH(a, b, pd) {
       const down = b < a;
-      return `태양의 실제 고도를 ${a}° → ${b}°로 ${down ? '낮추자' : '높이자'} 빛이 대기를 ${down ? '더 비스듬히, 더 길게' : '더 짧게'} 지나 위치 차이가 ${pd.toFixed(1)}° → ${this.sol.dev.toFixed(1)}°로 ${this.sol.dev > pd ? '커졌습니다' : this.sol.dev < pd ? '작아졌습니다' : '거의 같습니다'}.` +
+      const r = this.realR(b) || 0;
+      return `태양의 실제 고도를 ${a}° → ${b}°로 ${down ? '낮추자' : '높이자'} 빛이 대기를 ${down ? '더 비스듬히, 더 길게' : '더 짧게'} 지나, 실제 대기에서의 위치 차이가 ${fmtMin(pd)} → ${SR.j(fmtMin(r), '로')} ${r > pd ? '커졌습니다' : r < pd ? '작아졌습니다' : '같습니다'}.` +
         (down ? ' 지평선에 가까울수록 굴절 효과가 두드러집니다.' : '');
     },
 
     /* ---------------- 광선 추적 ---------------- */
-    delta() { return DMAX * (this.s.dens / 100); },
+    delta() { return DVIS * (this.s.dens / 100); },
     nAt(x, y) {
       const r = Math.hypot(x - CX, y - CY);
       const z = r - R;
@@ -243,31 +281,46 @@
       this.A = { x: E.x - Math.cos(e * D) * S.d, y: E.y - Math.sin(e * D) * S.d };
       this.sol = { h, e, dev: e - h };
       // 고도별 위치 차이 그래프
-      this.curve = [0, 1, 2, 3, 4, 6, 8, 10, 13, 16, 20, 25, 30, 40, 50, 60, 70, 80].map((hh) => ({ h: hh, dev: this.solve(hh, this.sunPos(hh)) - hh }));
+      // 고도별 실제 굴절량(분) 그래프
+      this.curve = [];
+      for (let hh = 0; hh <= 80; hh += hh < 10 ? 0.5 : 2) this.curve.push({ h: hh, r: this.realR(hh) });
       this.updateReadouts();
     },
 
     updateReadouts() {
       if (!this.ro) return;
       const q = (k) => this.ro.querySelector(`[data-k=${k}]`);
-      q('h').textContent = this.sol.h.toFixed(1) + '°';
-      q('e').textContent = this.sol.e.toFixed(1) + '°';
-      q('dev').textContent = '+' + this.sol.dev.toFixed(1) + '°';
-      const r = realRefrArcmin(this.sol.h);
-      q('real').textContent = r == null ? '-' : `+${r < 1 ? r.toFixed(1) : r.toFixed(0)}′ (${(r / 60).toFixed(2)}°)`;
+      const h = this.sol.h, r = this.realR(h);
+      q('h').textContent = h.toFixed(1) + '°';
+      q('real').textContent = `+${fmtMin(r)} (${(r / 60).toFixed(2)}°)`;
+      q('e').textContent = (h + r / 60).toFixed(2) + '°';
+      q('ex').textContent = r > 0 ? `약 ${this.exFactor()}배` : '-';
+    },
+    // 그림의 각도 차이 ÷ 실제 굴절량
+    exFactor() {
+      const r = this.realR(this.sol.h);
+      if (!r) return 0;
+      const f = this.sol.dev / (r / 60);
+      return f >= 10 ? Math.round(f / 5) * 5 : Math.round(f);
     },
 
     live() {
-      const { h, e, dev } = this.sol;
-      const ex = this.dl / N_REAL;
+      const { h } = this.sol;
       if (this.dl === 0) {
-        return { now: `대기 밀도가 높이에 따라 변하지 않으면 굴절률이 어디서나 같아 빛이 <b>직진</b>합니다. 그래서 실제 고도 ${h}°의 태양이 그대로 ${h}°에 보입니다.`, change: this.change };
+        return { now: `대기가 없으면(밀도 0) 빛이 휘지 않고 <b>직진</b>합니다. 그래서 실제 고도 ${h}°의 태양이 그대로 ${h}°에 보입니다.`, change: this.change };
       }
-      const r = realRefrArcmin(h);
-      let t = `햇빛은 밀도가 작은 상층에서 밀도가 큰 하층으로 들어오며 <b>지표 쪽으로 조금씩 휘어</b> 관측자에게 도달합니다. ` +
-        `관측자는 빛이 들어온 방향의 연장선에 태양이 있다고 보므로, 실제 고도 <b>${h}°</b>인 태양이 <b>${e.toFixed(1)}°</b>에 있는 것처럼 <b>${dev.toFixed(1)}° 더 높게</b> 보입니다. `;
-      t += `(그림은 굴절률 차이를 실제의 약 ${Math.round(ex)}배로 과장했습니다. 실제 대기에서 이 고도의 차이는 약 ${r < 1 ? r.toFixed(1) : r.toFixed(0)}′입니다.)`;
+      const r = this.realR(h);
+      const t = `햇빛은 밀도가 작은 상층에서 밀도가 큰 하층으로 들어오며 <b>지표 쪽으로 조금씩 휘어</b> 관측자에게 도달하고, 관측자는 빛이 들어온 방향에 태양이 있다고 봅니다. ` +
+        `실제 대기라면 고도 <b>${h}°</b>의 태양은 약 <b>${fmtMin(r)}(${(r / 60).toFixed(2)}°)</b> 높은 <b>${(h + r / 60).toFixed(2)}°</b>에 보입니다. ` +
+        `그림의 휘어짐은 이보다 약 <b>${this.exFactor()}배</b> 과장한 것입니다.`;
       return { now: t, change: this.change };
+    },
+    liveBasic() {
+      const { h } = this.sol;
+      if (this.dl === 0) return { now: '대기가 없으면 빛이 <b>직진</b>해, 태양이 <b>실제 위치 그대로</b> 보입니다.', change: this.change };
+      const r = this.realR(h);
+      const big = h <= 5 ? '지평선 부근이라 효과가 가장 큰 편입니다' : h >= 40 ? '태양이 높아 효과가 매우 작습니다' : '태양이 높아질수록 효과는 작아집니다';
+      return { now: `빛이 대기를 지나며 아래로 휘어, 태양이 실제보다 <b>높게</b> 보입니다. 실제로는 약 <b>${fmtMin(r)}(${(r / 60).toFixed(2)}°)</b>로 아주 작으며(그림은 과장), ${big}.`, change: this.change };
     },
 
     /* ---------------- 애니메이션 ---------------- */
@@ -311,13 +364,12 @@
       c.fillRect(0, 0, SR.W, SR.H);
       SR.drawStars(c, 19, 170, SR.W, SR.H);
       // 대기: 밀도 차이에 따라 아래가 진한 그라데이션
-      const k = this.s.dens / 100;
+      const k = Math.min(1.3, this.s.dens / 100);
       const ag = c.createRadialGradient(CX, CY, R, CX, CY, RA);
-      const base = 0.14;
       for (let i = 0; i <= 10; i++) {
         const z = (i / 10) * HA;
         const rho = (Math.exp(-z / HS) - Math.exp(-HA / HS)) / NORM; // 1 → 0
-        const a = base * (1 - k) + (0.06 + 0.5 * rho) * k;
+        const a = (0.03 + 0.45 * rho) * k;
         ag.addColorStop(i / 10, `rgba(150,120,255,${a.toFixed(3)})`);
       }
       c.fillStyle = ag;
@@ -328,7 +380,7 @@
         c.lineWidth = 1;
         [0.8, 0.6, 0.4, 0.2].forEach((f) => {
           const z = -HS * Math.log(f * NORM + Math.exp(-HA / HS));
-          c.strokeStyle = `rgba(200,180,255,${0.12 + 0.25 * k})`;
+          c.strokeStyle = `rgba(200,180,255,${0.12 + 0.2 * Math.min(1, k)})`;
           c.beginPath(); c.arc(CX, CY, R + z, Math.PI, 2 * Math.PI); c.stroke();
         });
         c.setLineDash([]);
@@ -354,7 +406,7 @@
       SR.roundRect(ctx, x - 10, y - 30, w + 20, h + 54, 10);
       ctx.fill();
       SR.label(ctx, '높이에 따른 대기 밀도', x, y - 10, { size: 14, weight: 700, color: '#d9ccff' });
-      const k = this.s.dens / 100;
+      const k = this.s.dens / 150; // 150%를 가로축 끝으로
       const X0 = x + 20, Y1 = y + h - 4;
       ctx.strokeStyle = 'rgba(210,220,245,0.5)';
       ctx.lineWidth = 1;
@@ -365,7 +417,7 @@
       for (let i = 0; i <= 40; i++) {
         const z = (i / 40) * HA;
         const rho = (Math.exp(-z / HS) - Math.exp(-HA / HS)) / NORM;
-        const v = (1 - k) * 0.55 + k * (0.08 + 0.92 * rho);
+        const v = k * (0.04 + 0.96 * rho);
         const px = X0 + v * (w - 26), py = Y1 - (i / 40) * (h - 10);
         i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
       }
@@ -382,9 +434,9 @@
       ctx.fill();
       ctx.strokeStyle = 'rgba(183,148,255,0.35)';
       ctx.stroke();
-      SR.label(ctx, '태양 고도에 따른 위치 차이 (모형)', x + 12, y + 22, { size: 14, weight: 700, color: '#e3d8ff' });
+      SR.label(ctx, '실제 대기의 굴절량 (계산값, 분 ′)', x + 12, y + 22, { size: 14, weight: 700, color: '#e3d8ff' });
       const gx = x + 40, gy = y + 36, gw = w - 56, gh = h - 70;
-      const maxD = Math.max(1, ...this.curve.map((c) => c.dev));
+      const maxD = Math.max(5, Math.ceil(Math.max(...this.curve.map((c) => c.r)) / 5) * 5);
       const X = (hh) => gx + (hh / 80) * gw, Y = (d) => gy + gh - (d / maxD) * gh;
       ctx.strokeStyle = 'rgba(210,220,245,0.45)';
       ctx.lineWidth = 1;
@@ -392,13 +444,13 @@
       ctx.strokeStyle = SR.ACCENT.refract;
       ctx.lineWidth = 2.4;
       ctx.beginPath();
-      this.curve.forEach((c, i) => (i ? ctx.lineTo(X(c.h), Y(c.dev)) : ctx.moveTo(X(c.h), Y(c.dev))));
+      this.curve.forEach((c, i) => (i ? ctx.lineTo(X(c.h), Y(c.r)) : ctx.moveTo(X(c.h), Y(c.r))));
       ctx.stroke();
-      const cx = X(this.sol.h), cy = Y(this.sol.dev);
+      const cx = X(this.sol.h), cy = Y(this.realR(this.sol.h));
       ctx.fillStyle = '#ffd166';
       ctx.beginPath(); ctx.arc(cx, cy, 5, 0, 6.2832); ctx.fill();
       [0, 20, 40, 60, 80].forEach((v) => SR.label(ctx, v + '°', X(v), gy + gh + 16, { size: 12, align: 'center', color: 'rgba(210,222,240,0.8)' }));
-      SR.label(ctx, maxD.toFixed(1) + '°', gx - 4, gy + 8, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
+      SR.label(ctx, maxD + '′', gx - 4, gy + 8, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
       SR.label(ctx, '0', gx - 4, gy + gh + 4, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
       SR.label(ctx, '실제 고도', gx + gw, gy + gh + 30, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
     },
@@ -441,7 +493,8 @@
       SR.arrowHead(ctx, E.x - last.tx * 6, E.y - last.ty * 6, Math.atan2(last.ty, last.tx), 13, '#fff4d6');
 
       // 파면 해설: 경로 중간의 한 지점
-      if (this.s.wave && this.dl > 0) {
+      const adv = this.lv !== 'basic';
+      if (adv && this.s.wave && this.dl > 0) {
         const entryS = this.path.cum[1] || 0;
         const sMid = entryS + (this.path.len - entryS) * 0.42;
         const q = this.posAt(sMid);
@@ -491,7 +544,7 @@
         ctx.fillStyle = 'rgba(200,170,255,0.18)';
         ctx.fill();
         ctx.restore();
-        SR.label(ctx, `겉보기 위치 ${e.toFixed(1)}°`, A.x, A.y - 32, { size: 16, align: 'center', color: '#e3d4ff', bg: 'rgba(8,10,30,0.65)' });
+        SR.label(ctx, '겉보기 위치 (방향은 과장)', A.x, A.y - 32, { size: 16, align: 'center', color: '#e3d4ff', bg: 'rgba(8,10,30,0.65)' });
       }
       SR.drawSun(ctx, S.x, S.y, 22);
       const below = dev > 0.05 && A.y < S.y;
@@ -501,7 +554,7 @@
       ctx.globalCompositeOperation = 'lighter';
       for (const p of this.ph) {
         SR.drawPhoton(ctx, p);
-        if (this.s.wave && p.tx != null) {
+        if (adv && this.s.wave && p.tx != null) {
           ctx.strokeStyle = 'rgba(200,175,255,0.55)';
           ctx.lineWidth = 1.6;
           ctx.beginPath();
@@ -515,8 +568,19 @@
 
       SR.drawObserver(ctx, E.x, GY, 1, -1);
       SR.label(ctx, '관측자', E.x + 12, GY + 22, { size: 16 });
-      SR.label(ctx, `실제 ${h}° → 겉보기 ${e.toFixed(1)}°`, E.x + 20, E.y - 150, { size: 17, weight: 700, color: '#efe6ff', align: 'center', bg: 'rgba(8,10,30,0.65)' });
-      SR.label(ctx, `차이 +${dev.toFixed(1)}°`, E.x + 20, E.y - 120, { size: 20, weight: 800, color: SR.ACCENT.refract, align: 'center', bg: 'rgba(8,10,30,0.65)' });
+      // 실제 계산값과 과장 표현을 분리해 안내
+      if (this.dl > 0) {
+        const r = this.realR(h);
+        const bx = 470, by = 20, bw = 360;
+        ctx.fillStyle = 'rgba(5,10,26,0.85)';
+        SR.roundRect(ctx, bx, by, bw, 92, 10); ctx.fill();
+        ctx.strokeStyle = 'rgba(183,148,255,0.45)'; ctx.lineWidth = 1.2; ctx.stroke();
+        SR.label(ctx, '실제 대기에서는', bx + 14, by + 24, { size: 14, color: 'rgba(225,215,255,0.85)' });
+        SR.label(ctx, `약 ${fmtMin(r)} (${(r / 60).toFixed(2)}°) 높아 보임`, bx + 14, by + 52, { size: 20, weight: 800, color: '#efe6ff' });
+        SR.label(ctx, `그림의 휘어짐은 약 ${this.exFactor()}배 과장 · 실제 효과는 훨씬 작음`, bx + 14, by + 78, { size: 14, color: SR.ACCENT.refract });
+      } else {
+        SR.label(ctx, '대기 없음: 빛이 직진 → 실제 위치 그대로 보임', 650, 50, { size: 18, weight: 700, align: 'center', color: '#efe6ff', bg: 'rgba(5,10,26,0.85)' });
+      }
 
       // 범례
       const lx = 22, ly = SR.H - 74;
@@ -535,9 +599,9 @@
       ctx.setLineDash([]);
       SR.label(ctx, '관측자가 보는 방향 (빛이 들어온 방향의 연장선)', lx + 44, ly + 53, { size: 15 });
 
-      this.drawInset(ctx);
+      if (adv) this.drawInset(ctx);
       this.drawGauge(ctx);
-      SR.label(ctx, '대기 (밀도 차이·두께 과장)', E.x + 64, GY - HA + 30, { size: 15, color: 'rgba(215,200,255,0.8)' });
+      SR.label(ctx, '대기 (두께·휘어짐 과장)', E.x + 64, GY - HA + 30, { size: 15, color: 'rgba(215,200,255,0.8)' });
     },
   };
 

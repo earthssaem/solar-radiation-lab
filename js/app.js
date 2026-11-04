@@ -27,6 +27,7 @@
   const canvas = $('#sim');
   const ctx = canvas.getContext('2d');
   const stage = $('#stage');
+  const quizEl = document.getElementById('quiz'); // 패널을 비워도 잃지 않도록 참조를 붙잡아 둠
 
   const ORDER = ['scatter', 'reflect', 'absorb', 'refract', 'journey'];
   const LABELS = {
@@ -40,6 +41,7 @@
   SR.modes.forEach((m) => (modes[m.id] = m));
 
   const app = (SR.app = {
+    level: 'basic', // 처음에는 기본 모드
     running: true,
     speed: 1,
     ps: 1,
@@ -81,12 +83,14 @@
     }
     if (app.mode && app.mode.exit) app.mode.exit();
     app.mode = m;
+    if (m.setLevel && m._level !== app.level) { m._level = app.level; m.setLevel(app.level); }
     document.documentElement.style.setProperty('--acc', m.accent);
     tabs.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', t.dataset.id === id ? 'true' : 'false'));
     $('#panelTitle').textContent = m.panelTitle || `${m.title} — 조건 조절`;
     const body = $('#panelBody');
     body.innerHTML = '';
     body.appendChild(m.panel);
+    placeQuiz();
     renderPrinciple();
     renderQuiz();
     renderLive();
@@ -101,10 +105,41 @@
   });
 
   /* ---------------- 하단 설명 ---------------- */
+  /* ---------------- 기본 모드 / 심화 탐구 ---------------- */
+  function placeQuiz() {
+    // 기본 모드: 탐구 질문을 조작 패널 아래에 두어 스크롤 없이 보이게
+    const q = quizEl;
+    const inPanel = app.level === 'basic' && !(app.mode && app.mode.quizBottom);
+    if (inPanel) $('#panelBody').appendChild(q);
+    else $('#explain').appendChild(q);
+    $('#explain').classList.toggle('has-quiz', !inPanel);
+  }
+  function setLevel(lv) {
+    if (lv === app.level) return;
+    app.level = lv;
+    document.body.classList.toggle('lv-basic', lv === 'basic');
+    document.body.classList.toggle('lv-adv', lv === 'adv');
+    document.querySelectorAll('#level button').forEach((b) => {
+      const on = b.dataset.lv === lv;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const m = app.mode;
+    if (m && m.setLevel) { m._level = lv; m.setLevel(lv); }
+    placeQuiz();
+    renderPrinciple();
+    renderLive();
+    app.dirty = true;
+  }
+  app.setLevel = setLevel;
+  document.querySelectorAll('#level button').forEach((b) => b.addEventListener('click', () => setLevel(b.dataset.lv)));
+
   function renderPrinciple() {
     const m = app.mode;
     const ol = $('#principle');
-    const pr = typeof m.principle === 'function' ? m.principle() : m.principle;
+    const pr = app.level === 'basic' && m.principleBasic
+      ? (typeof m.principleBasic === 'function' ? m.principleBasic() : m.principleBasic)
+      : typeof m.principle === 'function' ? m.principle() : m.principle;
     ol.className = 'flow' + (pr.length === 1 ? ' single' : '');
     const keys = m.principleKeys || ['원인', '과정', '결과'];
     ol.innerHTML = pr.map((t, i) => `<li><span class="fk">${pr.length === 1 ? (m.principleKeys ? m.principleKeys[0] : '설명') : keys[i]}</span><br>${t}</li>`).join('');
@@ -114,7 +149,7 @@
   function renderLive() {
     const m = app.mode;
     if (!m || !m.live) return;
-    const L = m.live();
+    const L = app.level === 'basic' && m.liveBasic ? m.liveBasic() : m.live();
     $('#liveNow').innerHTML = L.now;
     const ch = $('#liveChange');
     if (L.change) {
@@ -127,13 +162,13 @@
   function renderQuiz() {
     const m = app.mode;
     const q = m.quiz;
-    const box = $('#quiz');
+    const box = quizEl;
     if (!q) { box.innerHTML = ''; return; }
     const st = m._quiz;
     box.innerHTML = '';
     box.appendChild(SR.el('div', 'quiz-tag', '탐구 질문 · 먼저 조작해 보고 답을 고르세요'));
     box.appendChild(SR.el('p', 'quiz-q', q.q));
-    const opts = SR.el('div', 'quiz-opts');
+    const opts = SR.el('div', 'quiz-opts' + (q.options.every((t) => t.length <= 10) ? ' short' : ''));
     const letters = ['가', '나', '다', '라'];
     q.options.forEach((t, i) => {
       const b = SR.el('button', 'quiz-opt', `<span class="mk">${letters[i]}</span><span>${t}</span>`);

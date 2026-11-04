@@ -46,20 +46,33 @@
   const OZ = { y0: 118, y1: 192 };
   const WV = { y0: 268, y1: 505 };
   const GND = 525;
-  const SCENE_W = 690;
+  let SCENE_W = 690; // 심화: 장면 + 그래프 / 기본: 장면만(전체 폭)
   const DIR = (() => { const x = 0.22, y = 1, L = Math.hypot(x, y); return [x / L, y / L]; })();
   const SPEED = 250;
   const GX = 735, GW = 440; // 그래프 영역
   const SP = { y0: 58, y1: 318 };
   const TG = { y0: 412, y1: 632 };
   const TAU_COOL = 20; // 온도 이완 시간(모형 시간, 초)
-  const HEAT = 0.014; // 흡수 에너지 1당 온도 상승률(°C/s)
+  const HEAT = 0.014; // 흡수 에너지 1당 온도 상승률(모형 단위/s)
+  // 기본 모드의 대표 광선 (개수는 에너지 비율이 아님)
+  const BASIC_SEQ = {
+    all: ['uv_o3', 'vis_g', 'ir_h2o', 'ir_g', 'vis_g', 'vis_ref', 'uv_g', 'ir_g'],
+    uv: ['uv_o3', 'uv_g', 'uv_o3'],
+    vis: ['vis_g', 'vis_g', 'vis_ref', 'vis_g'],
+    ir: ['ir_h2o', 'ir_g', 'ir_g', 'ir_h2o'],
+  };
 
   const M = {
     id: 'absorb',
     title: '흡수',
     accent: SR.ACCENT.absorb,
     defaults: { band: 'all', o3: 100, h2o: 100, alb: 15 },
+
+    principleBasic: [
+      '햇빛이 대기로 들어와, 오존은 자외선의 일부를, 수증기는 적외선의 일부를 흡수한다.',
+      '나머지 빛은 대부분 지표에 도달해 지표에 흡수된다(일부는 반사).',
+      '흡수된 에너지는 물질의 내부 에너지를 늘려 온도를 높인다 — 많이 흡수한 곳일수록 더 많이 데워진다.',
+    ],
 
     principle: [
       '태양 복사 에너지가 물질에 흡수되면, 빛의 에너지가 물질 내부로 전달되어 분자 운동이 활발해진다(내부 에너지 증가).',
@@ -69,7 +82,7 @@
 
     quiz: {
       q: '태양 복사 에너지를 흡수하면 물질의 온도는 어떻게 달라질까?',
-      hint: '오른쪽 온도 그래프에서 흡수한 에너지가 많은 곳과 적은 곳의 온도 변화를 비교해 보세요.',
+      hint: '흡수가 일어나는 곳의 온도계와 분자 움직임을 관찰해 보세요.',
       options: ['올라간다', '내려간다', '변하지 않는다'],
       answer: 0,
       explain: () => {
@@ -83,9 +96,12 @@
     init(app) {
       this.app = app;
       this.s = { ...this.defaults };
+      this.lv = app.level;
       this.fx = new SR.Effects();
       this.buildPanel();
       this.recompute();
+      // 상대값 기준: 기본 조건에서 지표가 도달하는 최종 온도 상승 = 100
+      this.Tref = HEAT * this.energy.gAbs * TAU_COOL;
       this.makeMolecules();
       this.reset();
     },
@@ -101,7 +117,19 @@
       this.sampleAcc = 0;
       this.liveAcc = 0;
       this.anim = 0;
+      this.seqI = 0;
     },
+
+    setLevel(lv) {
+      this.lv = lv;
+      SCENE_W = lv === 'basic' ? SR.W : 690;
+      this.ph = [];
+      this.fx.clear();
+      this.bgKey = null;
+      this.app.markDirty();
+    },
+    rel(k) { return (this.T[k] / this.Tref) * 100; },
+    relWord(v) { return v < 4 ? '거의 그대로' : v < 25 ? '조금 상승' : v < 60 ? '상승' : '많이 상승'; },
 
     restoreDefaults() {
       Object.assign(this.s, this.defaults);
@@ -173,7 +201,9 @@
           this.onChange(true);
         },
       });
-      s1.append(this.ctl.band.el, this.ctl.o3.el, this.ctl.h2o.el, this.ctl.alb.el);
+      [this.ctl.o3, this.ctl.h2o, this.ctl.alb].forEach((c) => c.el.classList.add('adv-only'));
+      const bh = SR.el('p', 'ctl-hint basic-only', '빛의 종류를 골라, 어디에서 흡수되고 어느 곳의 온도가 오르는지 관찰하세요. 광선 몇 개는 대표로 보여 준 것이며 개수가 에너지 비율을 뜻하지는 않습니다.');
+      s1.append(this.ctl.band.el, bh, this.ctl.o3.el, this.ctl.h2o.el, this.ctl.alb.el);
 
       const s2 = ui.section('에너지 출입 (전체 태양 복사 = 100)', '스펙트럼을 적분해 계산한 값입니다.');
       const dl = SR.el('dl', 'ro-list');
@@ -187,8 +217,10 @@
       ].map(([k, n, c]) => `<dt><i style="background:${c}"></i>${n}</dt><dd data-k="${k}"></dd>`).join('');
       this.ro = dl;
       s2.appendChild(dl);
-      s2.appendChild(SR.el('p', 'ctl-hint', '※ 학습용 단순화 모형: 산란·구름·이산화 탄소 등 다른 기체의 흡수는 제외했고, 오존층·수증기층·지표의 열용량은 같다고 가정했습니다.'));
-      const foot = SR.el('div', 'pnl-foot');
+      s2.appendChild(SR.el('p', 'ctl-hint', '※ 학습용 단순화 모형: 산란·구름·이산화 탄소 등 다른 기체의 흡수는 제외했습니다.'));
+      s2.appendChild(SR.el('p', 'ctl-hint', '※ 온도는 실제 °C가 아닌 <b>상대값</b>입니다. 가정: 세 곳은 같은 양의 물질(같은 열용량)이고, 흡수한 에너지에 비례해 데워지며, 온도가 오를수록 열을 내보내 점차 일정해집니다. 기본 조건에서 지표의 최종값을 100으로 정했습니다.'));
+      s2.classList.add('adv-only');
+      const foot = SR.el('div', 'pnl-foot adv-only');
       foot.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
       p.append(s1, s2, foot);
       this.panel = p;
@@ -267,27 +299,33 @@
       if (this.s.band === 'all' || this.s.band === 'ir') t += `수증기는 <b>적외선의 특정 파장대</b>만 골라 <b>${e.h2o.toFixed(1)}</b>${SR.j(e.h2o.toFixed(1), '을').slice(-1)} 흡수합니다. `;
       if (this.s.band === 'vis') t += `가시광선은 오존·수증기에 거의 흡수되지 않고(오존 ${e.o3.toFixed(1)}, 수증기 ${e.h2o.toFixed(1)}) 대부분 지표까지 도달합니다. `;
       t += `지표에는 ${SR.j(e.arr.toFixed(1), '이')} 도달해 그중 ${SR.j(e.gRef.toFixed(1), '은')} 반사되고 <b>${e.gAbs.toFixed(1)}</b>${SR.j(e.gAbs.toFixed(1), '이').slice(-1)} 흡수됩니다. `;
-      t += `모형 시간 ${Math.round(this.time)}초 동안 온도 변화: 지표 <b>+${T.gnd.toFixed(1)}°C</b>, 수증기층 <b>+${T.h2o.toFixed(1)}°C</b>, 오존층 <b>+${T.o3.toFixed(1)}°C</b> — 흡수한 에너지가 많을수록 더 빨리 데워집니다.`;
+      t += `온도 상승(상대값, 실제 °C 아님): 지표 <b>${Math.round(this.rel('gnd'))}</b>, 수증기층 <b>${Math.round(this.rel('h2o'))}</b>, 오존층 <b>${Math.round(this.rel('o3'))}</b> — 흡수한 에너지가 많을수록 더 빨리, 더 많이 데워집니다.`;
       return { now: t, change: this.change };
+    },
+    liveBasic() {
+      const b = this.s.band;
+      const where = { all: '오존은 자외선 일부, 수증기는 적외선 일부를 흡수하고 나머지는 대부분 지표가 흡수합니다', uv: '자외선의 일부(파장이 짧은 쪽)는 오존층에서 흡수되고, 나머지는 지표까지 옵니다', vis: '가시광선은 대기에 거의 흡수되지 않고 지표까지 와서 흡수됩니다', ir: '적외선의 일부 파장은 수증기가 흡수하고, 나머지는 지표가 흡수합니다' }[b];
+      const g = this.relWord(this.rel('gnd')), w = this.relWord(this.rel('h2o')), o = this.relWord(this.rel('o3'));
+      return { now: `${where}. 지금 온도: 지표 <b>${g}</b> · 수증기층 <b>${w}</b> · 오존층 <b>${o}</b> — 흡수한 에너지가 많은 곳일수록 더 많이 데워집니다.`, change: '' };
     },
 
     /* ---------------- 애니메이션 ---------------- */
     makeMolecules() {
       const rnd = SR.rng(5);
       this.mol = { o3: [], h2o: [], gnd: [] };
-      for (let i = 0; i < 26; i++) this.mol.o3.push({ x: 30 + rnd() * 560, y: OZ.y0 + 10 + rnd() * (OZ.y1 - OZ.y0 - 20), r: rnd() * 6.28, ph: rnd() * 6.28 });
-      for (let i = 0; i < 44; i++) {
+      for (let i = 0; i < 40; i++) this.mol.o3.push({ u: rnd(), y: OZ.y0 + 10 + rnd() * (OZ.y1 - OZ.y0 - 20), r: rnd() * 6.28, ph: rnd() * 6.28 });
+      for (let i = 0; i < 66; i++) {
         const y = WV.y1 - 8 - (WV.y1 - WV.y0 - 16) * Math.pow(rnd(), 1.6);
-        this.mol.h2o.push({ x: 24 + rnd() * 570, y, r: rnd() * 6.28, ph: rnd() * 6.28 });
+        this.mol.h2o.push({ u: rnd(), y, r: rnd() * 6.28, ph: rnd() * 6.28 });
       }
-      for (let r = 0; r < 6; r++) for (let c = 0; c < 34; c++) this.mol.gnd.push({ x: 14 + c * 18 + (r % 2) * 9, y: GND + 26 + r * 22, ph: rnd() * 6.28 });
+      for (let r = 0; r < 6; r++) for (let c = 0; c < 64; c++) this.mol.gnd.push({ x: 14 + c * 18 + (r % 2) * 9, y: GND + 26 + r * 22, ph: rnd() * 6.28 });
     },
 
     emit() {
       if (this.energy.inc <= 0) return;
       const l = this.sampleLambda();
       const i = SR.clamp(Math.round(l - L0 - 0.5), 0, GRID.length - 1);
-      const x0 = SR.rand(-10, 470);
+      const x0 = SR.rand(-10, SCENE_W - 220);
       let fate = 'gnd', fy = GND;
       if (Math.random() < 1 - this.T1[i]) { fate = 'o3'; fy = SR.rand(OZ.y0 + 8, OZ.y1 - 8); }
       else if (Math.random() < 1 - this.T2[i]) { fate = 'h2o'; const r = Math.random(); fy = WV.y1 - (WV.y1 - WV.y0) * r * r; }
@@ -298,11 +336,35 @@
       });
     },
 
+    // 기본 모드: 대표 광선을 정해진 순서로 하나씩
+    emitBasic() {
+      const seq = BASIC_SEQ[this.s.band];
+      const kind = seq[this.seqI++ % seq.length];
+      const [band, fate0] = kind.split('_');
+      const l = band === 'uv' ? (fate0 === 'o3' ? 290 : 365) : band === 'ir' ? (fate0 === 'h2o' ? 1380 : 1050) : SR.rand(450, 640);
+      let fate = 'gnd', fy = GND, refl = false;
+      if (fate0 === 'o3') { fate = 'o3'; fy = SR.rand(OZ.y0 + 14, OZ.y1 - 14); }
+      else if (fate0 === 'h2o') { fate = 'h2o'; fy = SR.rand(WV.y1 - 120, WV.y1 - 20); }
+      else if (fate0 === 'ref') refl = true;
+      const slot = (this.seqI % 4) / 4;
+      const x0 = 60 + slot * (SCENE_W - 420) + SR.rand(0, 60);
+      const col = SR.waveColor(l);
+      this.ph.push({
+        x: x0, y: -12, vx: DIR[0] * SPEED, vy: DIR[1] * SPEED, l, fate, fy, refl, state: 0, trail: [], col, a: 1,
+        w: 3, r: 3.4, dash: l > 700 ? [8, 5] : l < 400 ? [3, 4] : null, basic: true,
+      });
+    },
+
     update(dt) {
       this.time += dt;
       this.anim += dt;
-      this.acc += 30 * dt;
-      while (this.acc >= 1) { this.acc -= 1; this.emit(); }
+      if (this.lv === 'basic') {
+        this.acc += 1.3 * dt;
+        while (this.acc >= 1) { this.acc -= 1; this.emitBasic(); }
+      } else {
+        this.acc += 16 * dt;
+        while (this.acc >= 1) { this.acc -= 1; this.emit(); }
+      }
       // 온도: dT/dt = (흡수 에너지)·k − T/τ
       const e = this.energy;
       const P = { o3: e.o3, h2o: e.h2o, gnd: e.gAbs };
@@ -321,14 +383,14 @@
 
       const keep = [];
       for (const p of this.ph) {
-        SR.pushTrail(p, 8);
+        SR.pushTrail(p, p.basic ? 22 : 8);
         if (p.state === 0) {
           p.x += p.vx * dt;
           p.y += p.vy * dt;
           if (p.y >= p.fy) {
             p.y = p.fy;
             if (p.fate === 'gnd') {
-              if (Math.random() < this.s.alb / 100) {
+              if (p.basic ? p.refl : Math.random() < this.s.alb / 100) {
                 p.state = 2;
                 p.vx = SR.rand(-0.5, 0.6) * SPEED;
                 p.vy = -SPEED * 0.9;
@@ -352,7 +414,7 @@
           p.t += dt;
           p.x += p.vx * dt * 0.15;
           p.y += p.vy * dt * 0.15;
-          const k = p.t / 0.5;
+          const k = p.t / (p.basic ? 0.9 : 0.5);
           p.a = Math.max(0, 1 - k);
           p.col = [255, Math.round(SR.lerp(p.col[1], 140, 0.1)), Math.round(SR.lerp(p.col[2], 60, 0.1))];
           if (k >= 1) continue;
@@ -414,12 +476,15 @@
       const amp = (k) => 0.6 + this.T[k] * 0.45 + this.pulse[k] * 3;
       const ao = amp('o3'), ah = amp('h2o'), ag = amp('gnd');
       const sO = this.s.o3 / 100, sH = this.s.h2o / 100;
+      const frac = SCENE_W / SR.W; // 장면 폭에 맞춘 분자 수
+      const MX = (m) => 20 + m.u * (SCENE_W - 150);
       // 오존 O₃
-      const nO = Math.round(this.mol.o3.length * Math.min(1, sO / 1.0) * (sO > 1 ? 1 : 1));
+      const baseO = Math.round(this.mol.o3.length * frac);
+      const nO = Math.round(baseO * Math.min(1, sO));
       const extraO = sO > 1;
       this.mol.o3.forEach((m, i) => {
-        if (i >= nO && !extraO) return;
-        const x = m.x + Math.sin(t * 9 + m.ph) * ao, y = m.y + Math.cos(t * 11 + m.ph) * ao;
+        if (i >= nO) return;
+        const x = MX(m) + Math.sin(t * 9 + m.ph) * ao, y = m.y + Math.cos(t * 11 + m.ph) * ao;
         const a = extraO ? 0.85 : 0.75;
         ctx.fillStyle = `rgba(244,140,195,${a})`;
         for (let j = 0; j < 3; j++) {
@@ -429,16 +494,17 @@
       });
       if (sO > 1) {
         // 추가 분자
-        const extra = Math.round(this.mol.o3.length * (sO - 1));
+        const extra = Math.round(baseO * (sO - 1));
         for (let i = 0; i < extra; i++) {
           const m = this.mol.o3[i];
-          const x = m.x + 17 + Math.sin(t * 8 + m.ph * 2) * ao, y = m.y + 9 + Math.cos(t * 10 + m.ph) * ao;
+          const x = MX(m) + 17 + Math.sin(t * 8 + m.ph * 2) * ao, y = m.y + 9 + Math.cos(t * 10 + m.ph) * ao;
           ctx.fillStyle = 'rgba(244,140,195,0.75)';
           for (let j = 0; j < 3; j++) { const an = m.r * 2 + j * 2.094; ctx.beginPath(); ctx.arc(x + Math.cos(an) * 3.4, y + Math.sin(an) * 3.4, 2.4, 0, 6.2832); ctx.fill(); }
         }
       }
       // 수증기 H₂O
-      const nH = Math.round(this.mol.h2o.length * Math.min(1, sH));
+      const baseH = Math.round(this.mol.h2o.length * frac);
+      const nH = Math.round(baseH * Math.min(1, sH));
       const drawH = (x, y, r) => {
         ctx.fillStyle = 'rgba(103,232,249,0.85)';
         ctx.beginPath(); ctx.arc(x, y, 3.6, 0, 6.2832); ctx.fill();
@@ -448,41 +514,47 @@
       };
       this.mol.h2o.forEach((m, i) => {
         if (i >= nH) return;
-        drawH(m.x + Math.sin(t * 8 + m.ph) * ah, m.y + Math.cos(t * 9.5 + m.ph) * ah, m.r + Math.sin(t * 12 + m.ph) * 0.1 * ah);
+        drawH(MX(m) + Math.sin(t * 8 + m.ph) * ah, m.y + Math.cos(t * 9.5 + m.ph) * ah, m.r + Math.sin(t * 12 + m.ph) * 0.1 * ah);
       });
       if (sH > 1) {
-        const extra = Math.round(this.mol.h2o.length * (sH - 1));
+        const extra = Math.round(baseH * (sH - 1));
         for (let i = 0; i < extra; i++) {
           const m = this.mol.h2o[i];
-          drawH(m.x + 13 + Math.sin(t * 7 + m.ph * 2) * ah, m.y - 11 + Math.cos(t * 9 + m.ph) * ah, m.r * 1.7);
+          drawH(MX(m) + 13 + Math.sin(t * 7 + m.ph * 2) * ah, m.y - 11 + Math.cos(t * 9 + m.ph) * ah, m.r * 1.7);
         }
       }
       // 지표 입자
-      const warm = SR.clamp(this.T.gnd / 25, 0, 1);
+      const warm = SR.clamp(this.rel('gnd') / 110, 0, 1);
       ctx.fillStyle = `rgba(${Math.round(150 + 105 * warm)},${Math.round(120 + 20 * warm)},${Math.round(90 - 40 * warm)},0.7)`;
       for (const m of this.mol.gnd) {
+        if (m.x > SCENE_W - 130) continue;
         const x = m.x + Math.sin(t * 10 + m.ph) * ag * 0.6, y = m.y + Math.cos(t * 12 + m.ph) * ag * 0.6;
         ctx.beginPath(); ctx.arc(x, y, 3, 0, 6.2832); ctx.fill();
       }
     },
 
     drawThermo(ctx, x, yc, key, label) {
-      const T = this.T[key];
+      const v = this.rel(key);
       const h = 76, top = yc - h / 2;
       const col = COL[key === 'gnd' ? 'gnd' : key];
       ctx.fillStyle = 'rgba(4,10,24,0.7)';
-      SR.roundRect(ctx, x - 64, top - 26, 128, h + 46, 10);
+      if (this.lv === 'basic') SR.roundRect(ctx, x - 112, top - 26, 150, h + 46, 10);
+      else SR.roundRect(ctx, x - 64, top - 26, 128, h + 46, 10);
       ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.12)';
       SR.roundRect(ctx, x - 6, top, 12, h, 6); ctx.fill();
       ctx.beginPath(); ctx.arc(x, top + h + 6, 10, 0, 6.2832); ctx.fill();
-      const f = SR.clamp(T / 25, 0, 1);
+      const f = SR.clamp(v / 120, 0, 1);
       ctx.fillStyle = '#ff6b3d';
       ctx.fillRect(x - 3.5, top + h - (h - 6) * f - 2, 7, (h - 6) * f + 6);
       ctx.beginPath(); ctx.arc(x, top + h + 6, 7.5, 0, 6.2832); ctx.fill();
-      SR.label(ctx, label, x, top - 9, { size: 14, align: 'center', color: SR.css(col) });
-      SR.label(ctx, `+${T.toFixed(1)}`, x + 14, top + h * 0.45, { size: 19, weight: 800, color: '#ffd2b8' });
-      SR.label(ctx, '°C', x + 14, top + h * 0.45 + 18, { size: 13, color: '#ffd2b8' });
+      SR.label(ctx, label, this.lv === 'basic' ? x - 37 : x, top - 9, { size: 14, align: 'center', color: SR.css(col) });
+      if (this.lv === 'basic') {
+        SR.label(ctx, this.relWord(v), x - 16, top + h * 0.5, { size: 15, weight: 700, color: '#ffd2b8', align: 'right' });
+      } else {
+        SR.label(ctx, `${Math.round(v)}`, x + 14, top + h * 0.45, { size: 19, weight: 800, color: '#ffd2b8' });
+        SR.label(ctx, '상대값', x + 14, top + h * 0.45 + 18, { size: 12, color: '#ffd2b8' });
+      }
     },
 
     drawSpectrum(ctx) {
@@ -556,19 +628,21 @@
 
     drawTempGraph(ctx) {
       const y0 = TG.y0, y1 = TG.y1, H = y1 - y0;
-      SR.label(ctx, '온도 변화 ΔT (단순화 모형)', GX, y0 - 18, { size: 16, weight: 700 });
-      const hist = this.hist;
+      SR.label(ctx, '온도 상승 정도 (상대값 · 실제 °C 아님)', GX, y0 - 18, { size: 16, weight: 700 });
+      const R = 100 / this.Tref;
+      const hist = this.hist.map((h) => ({ t: h.t, gnd: h.gnd * R, h2o: h.h2o * R, o3: h.o3 * R }));
+      const cur = { gnd: this.rel('gnd'), h2o: this.rel('h2o'), o3: this.rel('o3') };
       const tNow = this.time;
       const win = 60;
       const t0 = Math.max(0, tNow - win);
-      const maxT = Math.max(5, Math.ceil((Math.max(...hist.map((h) => Math.max(h.gnd, h.h2o, h.o3))) + 1) / 5) * 5);
+      const maxT = Math.max(20, Math.ceil((Math.max(...hist.map((h) => Math.max(h.gnd, h.h2o, h.o3))) + 1) / 20) * 20);
       const X = (t) => GX + ((t - t0) / win) * GW;
       const Y = (v) => y1 - (v / maxT) * H;
       ctx.strokeStyle = 'rgba(200,215,240,0.12)';
       ctx.lineWidth = 1;
       for (let v = 0; v <= maxT; v += maxT / 5) {
         ctx.beginPath(); ctx.moveTo(GX, Y(v)); ctx.lineTo(GX + GW, Y(v)); ctx.stroke();
-        SR.label(ctx, `+${Math.round(v)}`, GX - 6, Y(v) + 4, { size: 12, align: 'right', color: 'rgba(210,222,240,0.7)' });
+        SR.label(ctx, `${Math.round(v)}`, GX - 6, Y(v) + 4, { size: 12, align: 'right', color: 'rgba(210,222,240,0.7)' });
       }
       ctx.strokeStyle = 'rgba(200,215,240,0.5)';
       ctx.beginPath(); ctx.moveTo(GX, y0); ctx.lineTo(GX, y1); ctx.lineTo(GX + GW, y1); ctx.stroke();
@@ -587,14 +661,14 @@
           const x = X(h.t), y = Y(h[k]);
           if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
         }
-        ctx.lineTo(X(tNow), Y(this.T[k]));
+        ctx.lineTo(X(tNow), Y(cur[k]));
         ctx.stroke();
-        SR.label(ctx, `${n} +${this.T[k].toFixed(1)}°C`, Math.min(X(tNow) + 6, GX + GW - 4), Y(this.T[k]) - 6, { size: 13, align: X(tNow) > GX + GW - 120 ? 'right' : 'left', color: SR.css(COL[k]) });
+        SR.label(ctx, `${n} ${Math.round(cur[k])}`, Math.min(X(tNow) + 6, GX + GW - 4), Y(cur[k]) - 6, { size: 13, align: X(tNow) > GX + GW - 120 ? 'right' : 'left', color: SR.css(COL[k]) });
       });
     },
 
     draw(ctx) {
-      const key = this.s.h2o + '|' + this.s.o3;
+      const key = this.s.h2o + '|' + this.s.o3 + '|' + SCENE_W;
       if (this.bgKey !== key || !this.bg || this.bg.ps !== this.app.ps) {
         this.bg = SR.makeLayer(this.bg, this.app.ps, (c) => this.drawBackground(c));
         this.bgKey = key;
@@ -604,7 +678,7 @@
       ctx.beginPath(); ctx.rect(0, 0, SCENE_W, SR.H); ctx.clip();
       // 데워진 정도 표시
       const glow = (y0, y1, T, pulse) => {
-        const a = SR.clamp(T / 25, 0, 1) * 0.35 + pulse * 0.12;
+        const a = SR.clamp(T / this.Tref, 0, 1.2) * 0.3 + pulse * 0.12;
         if (a <= 0.01) return;
         const g = ctx.createLinearGradient(0, y0, 0, y1);
         g.addColorStop(0, 'rgba(255,120,50,0)');
@@ -631,11 +705,14 @@
       SR.label(ctx, '- - 적외선', 300, 30, { size: 14, color: '#ff7a98' });
       SR.label(ctx, '(자외선·적외선은 눈에 보이지 않지만 색으로 구분해 표시)', 96, 52, { size: 12, color: 'rgba(210,222,240,0.7)' });
       ctx.restore();
-      this.drawThermo(ctx, 618, (OZ.y0 + OZ.y1) / 2 + 2, 'o3', '오존층');
-      this.drawThermo(ctx, 618, 420, 'h2o', '수증기층');
-      this.drawThermo(ctx, 618, 600, 'gnd', '지표');
-      this.drawSpectrum(ctx);
-      this.drawTempGraph(ctx);
+      const tx = SCENE_W - 72;
+      this.drawThermo(ctx, tx, (OZ.y0 + OZ.y1) / 2 + 2, 'o3', '오존층');
+      this.drawThermo(ctx, tx, 420, 'h2o', '수증기층');
+      this.drawThermo(ctx, tx, 600, 'gnd', '지표');
+      if (this.lv !== 'basic') {
+        this.drawSpectrum(ctx);
+        this.drawTempGraph(ctx);
+      }
       SR.label(ctx, '층의 높이·두께는 실제 비율이 아닙니다', SCENE_W - 8, SR.H - 8, { size: 12, align: 'right', color: 'rgba(230,220,200,0.7)' });
     },
   };
