@@ -83,6 +83,7 @@
 
     reset() {
       this.ph = [];
+      if (this.rays) this.rays.forEach((r, i) => { r.t = i * 0.55; });
       this.fx.clear();
       this.acc = 0;
       this.accObs = 0;
@@ -255,6 +256,7 @@
       });
 
       this.renderView();
+      this.buildRays();
       this.bgKey = null;
       this.updateReadouts();
     },
@@ -401,165 +403,170 @@
       return { now: t, change: this.change };
     },
 
-    /* ---------------- 애니메이션 ---------------- */
-    emit(onObs) {
-      const keys = BANDS.map((b, i) => (this.s.show[b.key] ? i : -1)).filter((i) => i >= 0);
-      const bi = keys[(Math.random() * keys.length) | 0];
+    /* ---------------- 애니메이션: 모든 빛은 태양 방향에서 들어오는 평행광선에서 시작 ---------------- */
+    // 평행광선 하나(관측자 기준 수직 오프셋 k)의 기하: 화면 가장자리에서 들어와 대기를 지나 지표/화면 밖까지
+    makeRay(k, kind, opt = {}) {
       const d = this.d, n = this.n;
-      const k = onObs ? 0 : SR.rand(-360, 330);
-      const Qx = E.x + n[0] * k, Qy = E.y + n[1] * k;
-      const back = 1700;
-      const P0x = Qx - d[0] * back, P0y = Qy - d[1] * back;
-      const a = SR.rayCircle(P0x, P0y, d[0], d[1], CX, CY, RA);
-      if (!a) return;
-      const tStart = back + ((this.S.x - Qx) * d[0] + (this.S.y - Qy) * d[1]);
-      let tIn = Math.max(a[0], tStart), tOut = a[1];
-      let tEnd = 1e9;
-      if (onObs) { tOut = back; tEnd = back; }
-      else {
-        const g = SR.rayCircle(P0x, P0y, d[0], d[1], CX, CY, R);
-        if (g && g[0] > tIn) { tOut = g[0]; tEnd = g[0]; }
+      const Q = { x: E.x + n[0] * k, y: E.y + n[1] * k };
+      const back = 2400;
+      const P0 = { x: Q.x - d[0] * back, y: Q.y - d[1] * back };
+      const slab = (p, v, lo, hi) => {
+        if (Math.abs(v) < 1e-9) return p >= lo && p <= hi ? [-1e9, 1e9] : null;
+        const a = (lo - p) / v, b = (hi - p) / v;
+        return [Math.min(a, b), Math.max(a, b)];
+      };
+      const sx = slab(P0.x, d[0], 0, SR.W), sy = slab(P0.y, d[1], 0, SR.H);
+      if (!sx || !sy) return null;
+      const tC0 = Math.max(sx[0], sy[0]), tC1 = Math.min(sx[1], sy[1]);
+      if (tC0 >= tC1) return null;
+      const a = SR.rayCircle(P0.x, P0.y, d[0], d[1], CX, CY, RA);
+      if (!a) return null;
+      const g = SR.rayCircle(P0.x, P0.y, d[0], d[1], CX, CY, R);
+      const tIn = a[0];
+      let tOut = a[1], tEnd = tC1 + 20;
+      if (kind === 'obs') { tOut = back; tEnd = back; }
+      else if (g && g[0] > tIn) { tOut = g[0]; tEnd = g[0]; }
+      if (tC0 > tIn) return null; // 대기 안에서 화면에 처음 나타나는 광선은 쓰지 않음
+      return Object.assign({ k, kind, P0, back, tStart: tC0 - 12, tIn, tOut, tEnd, L: tOut - tIn, t: 0 }, opt);
+    },
+    at(ray, t) { return { x: ray.P0.x + this.d[0] * t, y: ray.P0.y + this.d[1] * t }; },
+
+    buildRays() {
+      const d = this.d;
+      const rays = [];
+      const A = this.makeRay(0, 'obs', { name: 'A' });
+      if (A) rays.push(A);
+      if (this.lv === 'basic') {
+        // B: 시선 위의 점 P를 지나는 광선 — P에서 산란된 빛이 관측자 눈으로
+        const P = this.P;
+        const kB = (P.x - E.x) * this.n[0] + (P.y - E.y) * this.n[1];
+        const B = this.makeRay(kB, 'point', { name: 'B', toEye: true });
+        if (B) { B.tPoint = B.back + ((P.x - E.x) * d[0] + (P.y - E.y) * d[1]); rays.push(B); }
+        // C: 대기 위쪽을 지나는 광선 — 산란광 일부가 우주로 빠져나가는 모습
+        // 산란 지점이 화면 안에 있고 P와 충분히 떨어진 광선을 고름
+        for (const kC of [200, 150, 110, 250, 70, -170, -210, -250, -120, -90]) {
+          const C = this.makeRay(kC, 'point', { name: 'C' });
+          if (!C || C.L < 120) continue;
+          C.tPoint = C.tIn + C.L * 0.3;
+          const q = this.at(C, C.tPoint);
+          if (q.x < 60 || q.x > SR.W - 60 || q.y < 60 || q.y > SR.H - 150) continue;
+          if (Math.hypot(q.x - P.x, q.y - P.y) < 170) continue;
+          rays.push(C);
+          break;
+        }
+      } else {
+        [-270, -180, -90, 90, 180, 270].forEach((k) => {
+          const r = this.makeRay(k, 'trans');
+          if (r && r.L > 30) rays.push(r);
+        });
       }
-      const L = Math.max(1, tOut - tIn);
-      const tau = this.tau[bi] * this.ms * (L / this.tExit);
-      let tSc = Infinity, aer = false;
-      const pr = 1 - Math.exp(-tau);
-      if (Math.random() < pr) {
-        tSc = tIn + (-Math.log(1 - Math.random() * pr) / tau) * L;
-        aer = Math.random() < this.fracAer[bi];
-      }
-      this.ph.push({
-        P0x, P0y, dist: tStart, tStart, tSc, tEnd, aer, bi, onObs,
-        x: P0x + d[0] * tStart, y: P0y + d[1] * tStart,
-        vx: 0, vy: 0, state: 0, life: 0, trail: [], col: BANDS[bi].col, a: 0, amax: onObs ? 1 : 0.42, w: onObs ? 2.2 : 1.3, r: onObs ? 2.6 : 1.7,
-      });
+      rays.forEach((r, i) => { r.t = i * 0.55; }); // 출발 시각을 엇갈리게
+      // 태양: 관측자를 향한 광선이 화면에 들어오는 가장자리(먼 태양이 그 방향에 있음)
+      if (A) this.S = this.at(A, A.tStart + 12 + 20);
+      this.rays = rays;
+      this.ph = [];
     },
 
-    scatter(p) {
-      const d = this.d;
-      p.state = 1;
-      p.a = 0.85;
-      p.w = 1.8;
-      p.r = 2.3;
-      let dir = null;
-      if (p.toEye) {
-        const ex = E.x - p.x, ey = E.y - p.y, L = Math.hypot(ex, ey);
-        dir = [ex / L, ey / L];
-        p.state = 2; p.a = 1; p.w = 2.6; p.r = 3;
-      } else if (this.sightMode() === 'sky' && !p.noEye) {
-        const dd = SR.distToSeg(p.x, p.y, E.x, E.y, this.sightEnd.x, this.sightEnd.y);
-        if (dd < 26) {
-          const ex = E.x - p.x, ey = E.y - p.y, L = Math.hypot(ex, ey);
-          const mu = (ex * d[0] + ey * d[1]) / L;
-          const w = p.aer ? Math.max(0.04, SR.phaseHG(mu, 0.7) / SR.phaseHG(1, 0.7)) : SR.phaseRayleigh(mu) / 1.5;
-          if (Math.random() < w) {
-            dir = [ex / L, ey / L];
-            p.state = 2;
-            p.a = 1;
-            p.w = 2.4;
-            p.r = 2.7;
+    // 백색광 묶음(파랑·초록·빨강이 함께 출발)을 광선 위에 하나 보냄
+    emitPacket(ray) {
+      const n = this.n;
+      BANDS.forEach((b, bi) => {
+        if (!this.s.show[b.key]) return;
+        const off = (bi - 1) * 2.4;
+        const p = {
+          ray, bi, dist: ray.tStart, tSc: Infinity, aer: false, off,
+          x: 0, y: 0, vx: 0, vy: 0, state: 0, life: 0, trail: [], col: b.col, a: 1, w: 2.6, r: 2.9,
+        };
+        if (ray.kind === 'point') {
+          // 정해진 산란 지점에서 산란될 확률 ∝ 광학적 두께(파란빛 기준 0.85)
+          if (Math.random() < 0.85 * (this.tau[bi] / this.tau[0])) p.tSc = ray.tPoint;
+        } else {
+          // 실제 투과율과 같은 확률로 경로 어딘가에서 산란(파장별 광학적 두께 × 공기량)
+          const tau = this.tau[bi] * this.ms * (ray.L / this.tExit);
+          const pr = 1 - Math.exp(-tau);
+          if (Math.random() < pr) {
+            p.tSc = ray.tIn + (-Math.log(1 - Math.random() * pr) / tau) * ray.L;
+            p.aer = Math.random() < this.fracAer[bi];
           }
         }
-      }
-      if (!dir) {
-        let th;
-        if (p.aer) {
-          const g = 0.7, xi = Math.random();
-          const mu = (1 / (2 * g)) * (1 + g * g - Math.pow((1 - g * g) / (1 - g + 2 * g * xi), 2));
-          th = Math.acos(SR.clamp(mu, -1, 1)) * (Math.random() < 0.5 ? -1 : 1);
-        } else {
-          do { th = Math.random() * 2 * Math.PI; } while (Math.random() * 2 > 1 + Math.cos(th) ** 2);
-        }
-        const c = Math.cos(th), s = Math.sin(th);
-        dir = [d[0] * c - d[1] * s, d[0] * s + d[1] * c];
-      }
-      p.vx = dir[0] * SPEED;
-      p.vy = dir[1] * SPEED;
-      p.life = 0;
-      p.trail.length = 0;
-      const col = p.aer ? [215, 195, 160] : p.col;
-      this.fx.add({ type: 'ring', x: p.x, y: p.y, col, r0: 2, r1: p.aer ? 12 : 10, dur: 0.4, lw: 1.4, a: p.aer ? 0.6 : 0.9 });
+        p.x = ray.P0.x + this.d[0] * p.dist + n[0] * off;
+        p.y = ray.P0.y + this.d[1] * p.dist + n[1] * off;
+        this.ph.push(p);
+      });
     },
 
-    // 기본 모드: 같은 출발점에서 함께 출발하는 세 색(백색광) 묶음
-    emitPacket(kind) {
-      const d = this.d, n = this.n;
-      const back = 1700;
-      let Q, tEndBase;
-      if (kind === 'obs') Q = E;
-      else Q = this.P;
-      const P0 = { x: Q.x - d[0] * back, y: Q.y - d[1] * back };
-      const tStart = back + ((this.S.x - Q.x) * d[0] + (this.S.y - Q.y) * d[1]);
-      const a = SR.rayCircle(P0.x, P0.y, d[0], d[1], CX, CY, RA);
-      if (!a) return;
-      const tIn = Math.max(a[0], tStart);
-      if (kind === 'obs') tEndBase = back;
-      else {
-        const g = SR.rayCircle(P0.x, P0.y, d[0], d[1], CX, CY, R);
-        tEndBase = g && g[0] > tIn ? g[0] : 1e9;
+    // 산란: 입사한 빛이 사라지고, 그 자리(대기 속)에서 산란광이 여러 방향으로 퍼져 나감
+    burst(p) {
+      const d = this.d;
+      const basic = this.lv === 'basic';
+      const N = p.aer ? 3 : basic ? 5 : 3;
+      const dirs = [];
+      const th0 = Math.random() * Math.PI * 2;
+      for (let i = 0; i < N; i++) {
+        let th;
+        if (p.aer) th = Math.atan2(d[1], d[0]) + (Math.random() - 0.5) * 1.2; // 먼지: 주로 앞쪽
+        else th = th0 + (i * 2 * Math.PI) / N + (Math.random() - 0.5) * 0.5;
+        dirs.push({ x: Math.cos(th), y: Math.sin(th), eye: false });
       }
-      const tauB = this.tau[0];
-      BANDS.forEach((b, bi) => {
-        const off = (bi - 1) * 2.4;
-        const ph = {
-          P0x: P0.x + n[0] * off, P0y: P0.y + n[1] * off, dist: tStart, tStart, tSc: Infinity, tEnd: tEndBase, aer: false, bi, onObs: kind === 'obs',
-          x: 0, y: 0, vx: 0, vy: 0, state: 0, life: 0, trail: [], col: b.col, a: 0, amax: 1, w: 2.4, r: 2.8, basic: true,
-        };
-        if (kind === 'obs') {
-          // 실제 투과율과 같은 확률로 도중에 산란되어 빠져나감
-          const L = back - tIn, tau = this.tau[bi] * this.ms;
-          const pr = 1 - Math.exp(-tau);
-          if (Math.random() < pr) ph.tSc = tIn + (-Math.log(1 - Math.random() * pr) / tau) * L;
-          ph.noEye = true;
-        } else {
-          // P에서 관측자 쪽으로 산란될 확률 ∝ 광학적 두께(파란빛 기준 0.9)
-          if (Math.random() < 0.9 * (this.tau[bi] / tauB)) { ph.tSc = back; ph.toEye = true; }
-        }
-        this.ph.push(ph);
+      let eye = false;
+      if (p.ray.toEye) eye = true;
+      else if (!basic && this.sightMode() === 'sky' && SR.distToSeg(p.x, p.y, E.x, E.y, this.sightEnd.x, this.sightEnd.y) < 26) {
+        const ex = E.x - p.x, ey = E.y - p.y, L = Math.hypot(ex, ey);
+        const mu = (ex * d[0] + ey * d[1]) / L;
+        const w = p.aer ? Math.max(0.04, SR.phaseHG(mu, 0.7) / SR.phaseHG(1, 0.7)) : SR.phaseRayleigh(mu) / 1.5;
+        eye = Math.random() < w;
+      }
+      if (eye) {
+        const ex = E.x - p.x, ey = E.y - p.y, L = Math.hypot(ex, ey);
+        dirs[0] = { x: ex / L, y: ey / L, eye: true };
+      }
+      const col = p.aer ? [225, 210, 180] : p.col;
+      dirs.forEach((v) => {
+        this.ph.push({
+          bi: p.bi, scattered: true, eye: v.eye, x: p.x, y: p.y, vx: v.x * 250, vy: v.y * 250, life: 0,
+          trail: [p.x, p.y], col, a: v.eye ? 1 : 0.85, w: v.eye ? 2.6 : 1.6, r: v.eye ? 3 : 2.2, dash: v.eye ? null : [5, 4],
+        });
       });
+      this.fx.add({ type: 'ring', x: p.x, y: p.y, col: p.aer ? [215, 195, 160] : [76, 184, 255], r0: 2, r1: 14, dur: 0.6, lw: 2 });
     },
 
     update(dt) {
       this.t += dt;
-      if (this.lv === 'basic') {
-        this.accObs += 0.75 * dt;
-        while (this.accObs >= 1) { this.accObs -= 1; this.emitPacket('obs'); }
-        this.accSky += 0.75 * dt;
-        while (this.accSky >= 1) { this.accSky -= 1; this.emitPacket('sky'); }
-      } else {
-        this.acc += 60 * dt;
-        while (this.acc >= 1) { this.acc -= 1; this.emit(false); }
-        this.accObs += 12 * dt;
-        while (this.accObs >= 1) { this.accObs -= 1; this.emit(true); }
+      const period = this.lv === 'basic' ? 1.9 : 1.6;
+      if (!this.rays) this.buildRays();
+      for (const r of this.rays) {
+        r.t -= dt;
+        if (r.t <= 0) { r.t += period; this.emitPacket(r); }
       }
-      const d = this.d;
+      const d = this.d, n = this.n;
       const keep = [];
       for (const p of this.ph) {
         if (!this.s.show[BANDS[p.bi].key]) continue;
-        SR.pushTrail(p, p.basic ? 16 : p.state === 2 ? 10 : 7);
-        if (p.state === 0) {
+        // 산란광은 꼬리를 산란 지점까지 남겨 출발점이 보이게 함
+        SR.pushTrail(p, p.scattered ? (p.eye ? 14 : 60) : 16);
+        if (!p.scattered) {
           p.dist += SPEED * dt;
-          p.a = p.amax * Math.min(1, (p.dist - p.tStart) / 60);
+          const ray = p.ray;
           if (p.dist >= p.tSc) {
-            p.x = p.P0x + d[0] * p.tSc;
-            p.y = p.P0y + d[1] * p.tSc;
-            this.scatter(p);
-          } else if (p.dist >= p.tEnd) {
-            if (p.onObs) this.hitEye(p, this.sightMode() === 'sun');
-            else if (p.basic) this.fx.add({ type: 'ring', x: p.x, y: p.y, col: p.col, r0: 2, r1: 6, dur: 0.3, lw: 1.2, a: 0.5 });
+            p.x = ray.P0.x + d[0] * p.tSc + n[0] * p.off;
+            p.y = ray.P0.y + d[1] * p.tSc + n[1] * p.off;
+            this.burst(p);
             continue;
-          } else {
-            p.x = p.P0x + d[0] * p.dist;
-            p.y = p.P0y + d[1] * p.dist;
           }
+          if (p.dist >= ray.tEnd) {
+            if (ray.kind === 'obs') this.hitEye(p, this.sightMode() === 'sun' || this.lv === 'basic');
+            continue;
+          }
+          p.x = ray.P0.x + d[0] * p.dist + n[0] * p.off;
+          p.y = ray.P0.y + d[1] * p.dist + n[1] * p.off;
         } else {
           p.x += p.vx * dt;
           p.y += p.vy * dt;
           p.life += dt;
-          if (p.state === 2) {
-            if (Math.hypot(p.x - E.x, p.y - E.y) < 6) { this.hitEye(p, true); continue; }
+          if (p.eye) {
+            if (Math.hypot(p.x - E.x, p.y - E.y) < 7) { this.hitEye(p, true); continue; }
           } else {
-            p.a = Math.max(0, 0.85 - p.life * (p.basic ? 0.9 : 0.4));
+            p.a = Math.max(0, 0.9 - p.life * 0.85);
             if (p.a <= 0) continue;
             const dx = p.x - CX, dy = p.y - CY;
             if (dx * dx + dy * dy < R * R) continue;
@@ -570,19 +577,12 @@
       }
       this.ph = keep;
       for (let i = 0; i < 3; i++) this.eyeHits[i] *= Math.exp(-dt / 1.6);
-      this.eyeFlash = Math.max(0, this.eyeFlash - dt * 3);
       this.fx.update(dt);
     },
 
     hitEye(p, seen) {
-      if (this.lv === 'basic') {
-        this.fx.add({ type: 'ring', x: E.x, y: E.y, col: p.col, r0: 3, r1: 10, dur: 0.4, lw: 2 });
-        return;
-      }
-      if (!seen) return;
-      this.eyeHits[p.bi] += 1;
-      this.eyeFlash = 1;
-      this.fx.add({ type: 'ring', x: E.x, y: E.y, col: p.col, r0: 3, r1: 9, dur: 0.35, lw: 2 });
+      this.fx.add({ type: 'ring', x: E.x, y: E.y, col: p.col, r0: 3, r1: 10, dur: 0.4, lw: 2 });
+      if (this.lv !== 'basic' && seen) this.eyeHits[p.bi] += 1;
     },
 
     /* ---------------- 그리기 ---------------- */
@@ -657,26 +657,11 @@
       const d = this.d, n = this.n;
 
       const basic = this.lv === 'basic';
-      // 평행하게 들어오는 햇빛(희미한 선)
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(255,248,225,0.06)';
-      ctx.beginPath();
-      for (let k = -340; k <= 320; k += basic ? 1e9 : 34) {
-        const sx = this.S.x + n[0] * k, sy = this.S.y + n[1] * k;
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + d[0] * 1400, sy + d[1] * 1400);
-      }
-      ctx.stroke();
+      this.drawBeam(ctx);
 
       // 관측자에게 오는 햇빛 — 경로를 따라 색이 변함
       const gr = ctx.createLinearGradient(this.entry.x, this.entry.y, E.x, E.y);
       this.pathCols.forEach((c, i) => gr.addColorStop(i / 4, SR.css(c, 0.95)));
-      ctx.strokeStyle = 'rgba(255,250,235,0.5)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(this.S.x, this.S.y);
-      ctx.lineTo(this.entry.x, this.entry.y);
-      ctx.stroke();
       ctx.strokeStyle = gr;
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -723,9 +708,10 @@
       SR.label(ctx, `${this.s.h}°`, E.x + Math.cos(la) * 86, E.y + Math.sin(la) * 86 + 5, { size: 17, color: '#ffe08a', align: 'center' });
       SR.label(ctx, '지평선', E.x + 176, E.y + 6, { size: 15, color: 'rgba(230,240,255,0.7)' });
 
-      // 태양 (대기 밖에서는 백색광)
-      SR.drawSun(ctx, this.S.x, this.S.y, 22, [255, 248, 230]);
-      SR.label(ctx, '태양 (백색광)', this.S.x, this.S.y - 36, { size: 17, align: 'center', color: '#fff3cf' });
+      // 태양 (화면 가장자리 — 멀리 있는 태양의 방향)
+      SR.drawSun(ctx, this.S.x, this.S.y, 24, [255, 248, 230]);
+      const lx = SR.clamp(this.S.x + 34, 60, SR.W - 200), ly = SR.clamp(this.S.y + (this.s.h > 60 ? 50 : -30), 24, SR.H - 80);
+      SR.label(ctx, '태양 (백색광)', lx, ly, { size: 17, color: '#fff3cf' });
 
       if (basic) this.drawBasicPaths(ctx);
       // 시선
@@ -781,47 +767,109 @@
       SR.label(ctx, '대기', 1040, 470, { size: 17, color: 'rgba(190,220,255,0.9)' });
       SR.label(ctx, '(두께는 과장)', 1040, 492, { size: 14, color: 'rgba(180,210,250,0.7)' });
       SR.label(ctx, '지표', E.x - 160, GY + 62, { size: 17, color: 'rgba(190,235,200,0.85)' });
-      // 입자 범례
-      ctx.fillStyle = 'rgba(200,225,255,0.9)';
-      ctx.fillRect(24, SR.H - 56, 3, 3);
-      SR.label(ctx, '공기 분자: 짧은 파장일수록 강하게 산란', 36, SR.H - 48, { size: 16, color: 'rgba(210,225,245,0.9)' });
-      if (!basic) {
-        ctx.fillStyle = 'rgba(214,190,150,0.9)';
-        ctx.beginPath(); ctx.arc(26, SR.H - 25, 3.2, 0, 6.2832); ctx.fill();
-        SR.label(ctx, '먼지·에어로졸: 파장 차이가 작고 주로 앞쪽으로 산란', 36, SR.H - 19, { size: 16, color: 'rgba(225,210,185,0.9)' });
-        this.drawView(ctx);
-      } else {
-        SR.label(ctx, '파랑·초록·빨강 알갱이가 함께 출발한 것 = 백색광', 24, SR.H - 19, { size: 16, color: 'rgba(235,240,250,0.9)' });
-        this.drawCard(ctx);
-      }
+      // 범례: 입사광과 산란광 구분
+      this.drawLegend(ctx, basic);
+      if (!basic) this.drawView(ctx);
+      else this.drawCard(ctx);
     },
 
-    // 기본 모드: 하늘빛이 눈에 들어오는 대표 경로
+    // 대기 밖의 햇빛: 같은 방향으로 나란히 들어오는 평행광선의 띠(대기에 닿기 전까지만)
+    drawBeam(ctx) {
+      const rays = this.rays || [];
+      if (!rays.length) return;
+      const d = this.d, n = this.n;
+      let kmin = Infinity, kmax = -Infinity, tFar = 0;
+      rays.forEach((r) => { kmin = Math.min(kmin, r.k); kmax = Math.max(kmax, r.k); tFar = Math.max(tFar, r.tIn); });
+      kmin -= 28; kmax += 28;
+      const c0 = { x: E.x + n[0] * kmin - d[0] * 2400, y: E.y + n[1] * kmin - d[1] * 2400 };
+      const c1 = { x: E.x + n[0] * kmax - d[0] * 2400, y: E.y + n[1] * kmax - d[1] * 2400 };
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, SR.W, SR.H);
+      ctx.arc(CX, CY, RA, 0, 6.2832, true);
+      ctx.clip('evenodd');
+      const gb = ctx.createLinearGradient(c0.x, c0.y, c1.x, c1.y);
+      gb.addColorStop(0, 'rgba(255,240,200,0)');
+      gb.addColorStop(0.15, 'rgba(255,240,200,0.07)');
+      gb.addColorStop(0.85, 'rgba(255,240,200,0.07)');
+      gb.addColorStop(1, 'rgba(255,240,200,0)');
+      ctx.fillStyle = gb;
+      ctx.beginPath();
+      ctx.moveTo(c0.x, c0.y);
+      ctx.lineTo(c0.x + d[0] * tFar, c0.y + d[1] * tFar);
+      ctx.lineTo(c1.x + d[0] * tFar, c1.y + d[1] * tFar);
+      ctx.lineTo(c1.x, c1.y);
+      ctx.fill();
+      ctx.restore();
+      // 대표 광선의 경로(먼저 표시해 두고 그 위로 빛이 진행)
+      ctx.lineWidth = 1.2;
+      rays.forEach((r) => {
+        const a = this.at(r, r.tStart), b = this.at(r, r.kind === 'obs' ? r.tIn : r.tEnd);
+        ctx.strokeStyle = 'rgba(255,244,215,0.32)';
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        if (r.kind === 'point') {
+          const q = this.at(r, r.tPoint);
+          ctx.strokeStyle = SR.ACCENT.scatter;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, 6.2832); ctx.stroke();
+          ctx.lineWidth = 1.2;
+        }
+        // 화면 밖에서 들어오는 방향 표시
+        SR.arrowHead(ctx, a.x + d[0] * 34, a.y + d[1] * 34, Math.atan2(d[1], d[0]), 9, 'rgba(255,240,200,0.6)');
+      });
+      // 띠 이름
+      // 띠 바깥쪽(위쪽)에 이름표
+      const mid = rays.find((r) => r.kind === 'obs') || rays[0];
+      const m = this.at(mid, mid.tStart + (mid.tIn - mid.tStart) * 0.45);
+      const off = mid.k - kmin + 26;
+      const lx = m.x - n[0] * off, ly = m.y - n[1] * off;
+      let bx = SR.clamp(lx - 160, 20, SR.W - 470), by = SR.clamp(ly, 50, SR.H - 120);
+      if (by < 330) bx = Math.min(bx, 400); // 오른쪽 위 카드와 겹치지 않게
+      SR.label(ctx, '햇빛: 멀리 있는 태양에서 같은 방향으로 오는 평행광선', bx, by, { size: 15, color: 'rgba(255,240,205,0.95)', bg: 'rgba(5,12,28,0.65)' });
+    },
+
+    // 기본 모드: 산란 지점 → 관측자 눈 경로와 이름표
     drawBasicPaths(ctx) {
-      const d = this.d, P = this.P;
-      const back = ((this.S.x - P.x) * d[0] + (this.S.y - P.y) * d[1]);
-      const sx = P.x + d[0] * back, sy = P.y + d[1] * back;
-      ctx.strokeStyle = 'rgba(255,250,235,0.35)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(P.x, P.y); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,240,210,0.16)';
-      ctx.setLineDash([4, 6]);
-      ctx.beginPath(); ctx.moveTo(P.x, P.y); ctx.lineTo(P.x + d[0] * 160, P.y + d[1] * 160); ctx.stroke();
-      ctx.setLineDash([]);
-      // 산란 지점 → 눈
-      ctx.strokeStyle = 'rgba(110,175,255,0.8)';
+      const P = this.P;
+      ctx.strokeStyle = 'rgba(110,175,255,0.75)';
       ctx.lineWidth = 3;
       ctx.setLineDash([9, 6]);
       ctx.beginPath(); ctx.moveTo(P.x, P.y); ctx.lineTo(E.x + (P.x - E.x) * 0.06, E.y + (P.y - E.y) * 0.06); ctx.stroke();
       ctx.setLineDash([]);
       const an = Math.atan2(E.y - P.y, E.x - P.x);
       SR.arrowHead(ctx, E.x + (P.x - E.x) * 0.05, E.y + (P.y - E.y) * 0.05, an, 12, 'rgba(110,175,255,0.95)');
-      ctx.strokeStyle = SR.ACCENT.scatter;
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(P.x, P.y, 9, 0, 6.2832); ctx.stroke();
       SR.label(ctx, '산란 지점', P.x + 14, P.y - 12, { size: 16, color: SR.ACCENT.scatter, bg: 'rgba(5,12,28,0.7)' });
       const mx = (P.x + E.x) / 2, my = (P.y + E.y) / 2;
       SR.label(ctx, '산란된 파란빛 → 눈', mx + 16, my + 4, { size: 16, color: '#9cc8ff', bg: 'rgba(5,12,28,0.7)' });
+      const C = (this.rays || []).find((r) => r.name === 'C');
+      if (C) {
+        const q = this.at(C, C.tPoint);
+        const left = q.x < E.x;
+        SR.label(ctx, '산란 지점 (산란광 일부는 우주로)', left ? q.x - 16 : q.x + 16, q.y - 14, { size: 15, align: left ? 'right' : 'left', color: SR.ACCENT.scatter, bg: 'rgba(5,12,28,0.7)' });
+      }
+    },
+
+    drawLegend(ctx, basic) {
+      const x = 22, y = SR.H - (basic ? 62 : 86);
+      ctx.fillStyle = 'rgba(5,12,28,0.6)';
+      SR.roundRect(ctx, x - 8, y - 20, 410, basic ? 66 : 90, 8); ctx.fill();
+      // 입사광
+      [[80, 150, 255], [90, 240, 120], [255, 85, 60]].forEach((c, i) => {
+        ctx.strokeStyle = SR.css(c, 0.95); ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.moveTo(x, y - 6 + i * 3); ctx.lineTo(x + 34, y - 6 + i * 3); ctx.stroke();
+      });
+      SR.label(ctx, '들어오는 햇빛(백색광: 세 색이 함께 진행)', x + 44, y, { size: 15 });
+      ctx.strokeStyle = 'rgba(80,150,255,0.95)'; ctx.lineWidth = 1.6; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(x, y + 20); ctx.lineTo(x + 34, y + 20); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = SR.ACCENT.scatter; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x + 46, y + 20, 6, 0, 6.2832); ctx.stroke();
+      SR.label(ctx, '산란 지점에서 퍼지는 산란광(파란빛이 많음)', x + 60, y + 25, { size: 15 });
+      if (!basic) {
+        ctx.fillStyle = 'rgba(214,190,150,0.9)';
+        ctx.beginPath(); ctx.arc(x + 17, y + 45, 3.2, 0, 6.2832); ctx.fill();
+        SR.label(ctx, '먼지·에어로졸: 파장 차이가 작고 주로 앞쪽으로 산란', x + 44, y + 50, { size: 15, color: 'rgba(225,210,185,0.95)' });
+      }
     },
 
     // 기본 모드: 관측 결과(태양의 색 / 하늘의 색)

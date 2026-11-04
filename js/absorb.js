@@ -1,719 +1,745 @@
 /* =========================================================
-   ③ 흡수 — 대기 성분별 선택적 흡수와 온도 변화(단순화 모형)
+   ③ 흡수 — 지구 대기의 선택적 흡수
+   ① 태양 복사 에너지의 흡수  ② 지구 복사 에너지의 흡수(대기의 창·온실 효과)
+   ③ 태양 복사와 지구 복사의 스펙트럼 비교
+   광선은 정해진 파장(λ)을 가지고, 대기에서 흡수될 확률 = 그 파장에서 대기 기체의 흡수 정도.
+   스펙트럼 그래프에는 지금 움직이는 광선의 파장이 함께 표시되어 그래프와 시뮬레이션이 일치한다.
    ========================================================= */
 (function () {
   'use strict';
   const SR = window.SR;
 
-  // 대기 밖 태양 복사: 5778 K 흑체 + 자외선 영역 보정(실제 태양은 흑체보다 자외선이 적음)
-  const UVF = [[200, 0.05], [250, 0.2], [300, 0.5], [350, 0.72], [400, 0.82], [450, 1], [2500, 1]];
-  // 오존 연직 광학적 두께(약 300 DU 기준, 흡수 단면적 자료를 단순화)
-  const O3 = [[200, 2.6], [210, 4], [220, 13], [230, 34], [240, 64], [250, 86], [255, 92], [260, 88], [270, 67], [280, 32], [290, 13], [300, 3.2], [305, 1.6], [310, 0.8], [315, 0.4], [320, 0.2], [330, 0.05], [340, 0.012], [350, 0.003], [400, 0.0005], [450, 0.003], [500, 0.012], [550, 0.026], [600, 0.04], [650, 0.021], [700, 0.008], [750, 0.005], [800, 0.002], [900, 0], [2500, 0]];
-  // 수증기 흡수대(중심 nm, 폭 nm, 광학적 두께) — 가강수량 약 2 cm 기준 띠 평균값을 단순화
-  const H2O = [[720, 12, 0.15], [820, 15, 0.25], [940, 30, 1.2], [1130, 35, 1.5], [1380, 55, 6], [1870, 70, 8], [2700, 150, 12]];
-  const L0 = 200, L1 = 2500;
-  const BAND = {
-    all: { name: '전체', lo: L0, hi: L1 },
-    uv: { name: '자외선', lo: L0, hi: 400 },
-    vis: { name: '가시광선', lo: 400, hi: 700 },
-    ir: { name: '적외선', lo: 700, hi: L1 },
+  /* ---------------- 대기 기체의 흡수 특성(대표 흡수대 모양을 단순화한 정성적 모형) ---------------- */
+  const Gs = (l, c, w, a) => a * Math.exp(-(((l - c) / w) ** 2));
+  const cl = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const GAS = {
+    o3: {
+      name: '오존·산소', short: 'O₃·O₂', col: [244, 114, 182],
+      bands: '자외선(약 0.3 μm 이하), 9.6 μm 부근(오존)',
+      A: (l) => cl((l < 0.3 ? 1 : l < 0.34 ? 1 - (l - 0.3) / 0.04 : 0) + Gs(l, 0.6, 0.08, 0.05) + Gs(l, 4.75, 0.1, 0.3) + Gs(l, 9.6, 0.25, 0.65) + Gs(l, 14.2, 0.3, 0.12)),
+    },
+    h2o: {
+      name: '수증기', short: 'H₂O', col: [103, 232, 249],
+      bands: '0.9~2.7 μm의 여러 띠, 6.3 μm 부근, 약 18 μm 이상',
+      A: (l) => cl(Gs(l, 0.72, 0.012, 0.1) + Gs(l, 0.82, 0.015, 0.15) + Gs(l, 0.94, 0.03, 0.45) + Gs(l, 1.13, 0.035, 0.55) + Gs(l, 1.38, 0.06, 0.9) + Gs(l, 1.87, 0.08, 0.95) + Gs(l, 2.7, 0.18, 1) + Gs(l, 6.3, 0.9, 1) + 1 / (1 + Math.exp(-(l - 18) / 1.6)) + (l > 7 && l < 20 ? 0.07 : 0)),
+    },
+    co2: {
+      name: '이산화 탄소', short: 'CO₂', col: [226, 232, 240],
+      bands: '2.7 μm, 4.3 μm, 15 μm 부근',
+      A: (l) => cl(Gs(l, 2.0, 0.04, 0.35) + Gs(l, 2.7, 0.08, 0.7) + Gs(l, 4.3, 0.2, 1) + Gs(l, 15, 1.3, 1) + Gs(l, 10.4, 0.15, 0.08) + Gs(l, 9.4, 0.15, 0.06)),
+    },
+    ch4: {
+      name: '메테인', short: 'CH₄', col: [134, 239, 172],
+      bands: '3.3 μm, 7.7 μm 부근',
+      A: (l) => cl(Gs(l, 3.3, 0.12, 0.6) + Gs(l, 7.7, 0.35, 0.85)),
+    },
+    n2o: {
+      name: '산화 이질소', short: 'N₂O', col: [253, 224, 71],
+      bands: '4.5 μm, 7.8 μm, 17 μm 부근',
+      A: (l) => cl(Gs(l, 3.9, 0.05, 0.2) + Gs(l, 4.5, 0.12, 0.9) + Gs(l, 7.8, 0.2, 0.6) + Gs(l, 17, 0.6, 0.35)),
+    },
   };
-  const COL = { o3: [244, 114, 182], h2o: [103, 232, 249], gnd: [214, 161, 90], ref: [94, 234, 212] };
+  const GAS_ORDER = ['o3', 'h2o', 'co2', 'ch4', 'n2o'];
+  const Atot = (l) => 1 - GAS_ORDER.reduce((p, k) => p * (1 - GAS[k].A(l)), 1);
 
-  function interp(tab, l) {
-    for (let i = 0; i < tab.length - 1; i++) {
-      if (l >= tab[i][0] && l <= tab[i + 1][0]) {
-        const t = (l - tab[i][0]) / (tab[i + 1][0] - tab[i][0]);
-        return tab[i][1] + (tab[i + 1][1] - tab[i][1]) * t;
-      }
-    }
-    return 0;
+  // 흑체 복사(파장 μm) — 빈의 변위 법칙 λmax = 2898 μm·K / T
+  const T_SUN = 5800, T_EARTH = 288;
+  const B = (l, T) => SR.planck(l * 1000, T);
+  const peak = (T) => 2898 / T;
+  const B_SUN_MAX = B(peak(T_SUN), T_SUN), B_EARTH_MAX = B(peak(T_EARTH), T_EARTH);
+  const spec = (l, kind) => (kind === 'sun' ? B(l, T_SUN) / B_SUN_MAX : B(l, T_EARTH) / B_EARTH_MAX);
+
+  /* ---------------- 장면 ---------------- */
+  const SW = 720;                   // 시뮬레이션 장면 폭
+  const CH = { x: 760, w: 420 };    // 그래프 영역
+  const OZ = { y0: 96, y1: 152 };   // 성층권 오존층
+  const GND = 520;
+  const GAS_Y = { o3: [OZ.y0 + 6, OZ.y1 - 6], h2o: [330, 505], co2: [175, 505], ch4: [175, 505], n2o: [175, 505] };
+  const RANGE = { sun: [0.1, 4], earth: [3, 50], compare: [0.1, 100] };
+
+  const SEL = {
+    sun: [
+      { v: 'all', label: '전체', sw: 'linear-gradient(90deg,#c4a0ff,#5aa8ff,#7dff8a,#ffd166,#ff6b5a,#ff6b8a)' },
+      { v: 'o3', label: '오존·산소', sw: '#f472b6' },
+      { v: 'h2o', label: '수증기', sw: '#67e8f9' },
+      { v: 'co2', label: '이산화 탄소', sw: '#e2e8f0' },
+      { v: 'vis', label: '가시광선', sw: 'linear-gradient(90deg,#5aa8ff,#7dff8a,#ffd166,#ff6b5a)' },
+    ],
+    earth: [
+      { v: 'all', label: '전체', sw: '#ff9a5a' },
+      { v: 'h2o', label: '수증기', sw: '#67e8f9' },
+      { v: 'co2', label: '이산화 탄소', sw: '#e2e8f0' },
+      { v: 'ch4', label: '메테인', sw: '#86efac' },
+      { v: 'n2o', label: '산화 이질소', sw: '#fde047' },
+      { v: 'win', label: '대기의 창', sw: '#4ade80' },
+    ],
+  };
+  // 대표 광선의 파장(μm) — 선택한 기체의 흡수대와 그 밖의 파장을 섞어 보여 줌
+  const REP = {
+    sun: {
+      all: [0.25, 0.5, 1.38, 0.36, 0.62, 1.05, 2.7, 0.45],
+      o3: [0.25, 0.28, 0.55, 0.33, 0.37],
+      h2o: [1.38, 1.05, 1.87, 0.55, 0.94, 1.6],
+      co2: [2.7, 1.6, 2.0, 0.55, 2.7],
+      vis: [0.42, 0.5, 0.58, 0.66, 0.7],
+    },
+    earth: {
+      all: [15, 10, 6.3, 11.5, 20, 9.6, 7.7, 12],
+      h2o: [6.3, 10, 20, 5.8, 25, 11],
+      co2: [15, 10.5, 14.3, 15.8, 11.5],
+      ch4: [7.7, 10, 7.5, 12],
+      n2o: [7.8, 11, 17, 10],
+      win: [8.6, 10, 11, 12.2, 9.6, 10.5],
+    },
+  };
+
+  function colOf(l) {
+    if (l < 0.4) return [196, 160, 255];
+    if (l <= 0.7) return SR.waveColor(l * 1000);
+    if (l < 4) return [255, 107, 138];
+    return [255, 150, 90];
   }
-  const tauO3 = (l) => interp(O3, l);
-  const tauH2O = (l) => H2O.reduce((s, [c, w, a]) => s + a * Math.exp(-(((l - c) / w) ** 2)), 0);
-  const toa = (l) => SR.planck(l, 5778) * interp(UVF, l);
-
-  // 1 nm 간격 표 (계산·표본 추출 공용)
-  const GRID = [];
-  for (let l = L0; l < L1; l++) GRID.push(l + 0.5);
-  const TOA = GRID.map(toa);
-  const TOA_SUM = TOA.reduce((a, b) => a + b, 0);
-  const TOA_MAX = Math.max(...TOA);
-  const T_O3 = GRID.map(tauO3);
-  const T_H2O = GRID.map(tauH2O);
-
-  // 장면 배치
-  const OZ = { y0: 118, y1: 192 };
-  const WV = { y0: 268, y1: 505 };
-  const GND = 525;
-  let SCENE_W = 690; // 심화: 장면 + 그래프 / 기본: 장면만(전체 폭)
-  const DIR = (() => { const x = 0.22, y = 1, L = Math.hypot(x, y); return [x / L, y / L]; })();
-  const SPEED = 250;
-  const GX = 735, GW = 440; // 그래프 영역
-  const SP = { y0: 58, y1: 318 };
-  const TG = { y0: 412, y1: 632 };
-  const TAU_COOL = 20; // 온도 이완 시간(모형 시간, 초)
-  const HEAT = 0.014; // 흡수 에너지 1당 온도 상승률(모형 단위/s)
-  // 기본 모드의 대표 광선 (개수는 에너지 비율이 아님)
-  const BASIC_SEQ = {
-    all: ['uv_o3', 'vis_g', 'ir_h2o', 'ir_g', 'vis_g', 'vis_ref', 'uv_g', 'ir_g'],
-    uv: ['uv_o3', 'uv_g', 'uv_o3'],
-    vis: ['vis_g', 'vis_g', 'vis_ref', 'vis_g'],
-    ir: ['ir_h2o', 'ir_g', 'ir_g', 'ir_h2o'],
-  };
+  function dashOf(l) { return l < 0.4 ? [2, 3] : l <= 0.7 ? null : l < 4 ? [6, 4] : [10, 5]; }
+  const fmtL = (l) => (l < 1 ? l.toFixed(2) : l < 10 ? l.toFixed(1) : l.toFixed(1).replace('.0', '')) + ' μm';
 
   const M = {
     id: 'absorb',
     title: '흡수',
     accent: SR.ACCENT.absorb,
-    defaults: { band: 'all', o3: 100, h2o: 100, alb: 15 },
 
-    principleBasic: [
-      '햇빛이 대기로 들어와, 오존은 자외선의 일부를, 수증기는 적외선의 일부를 흡수한다.',
-      '나머지 빛은 대부분 지표에 도달해 지표에 흡수된다(일부는 반사).',
-      '흡수된 에너지는 물질의 내부 에너지를 늘려 온도를 높인다 — 많이 흡수한 곳일수록 더 많이 데워진다.',
-    ],
-
-    principle: [
-      '태양 복사 에너지가 물질에 흡수되면, 빛의 에너지가 물질 내부로 전달되어 분자 운동이 활발해진다(내부 에너지 증가).',
-      '대기의 기체는 특정 파장만 골라 흡수한다: 오존은 주로 자외선, 수증기는 적외선의 일부 파장대. 나머지 빛은 대부분 통과해 지표에 도달한다.',
-      '지표는 도달한 빛의 여러 파장을 흡수하므로, 흡수한 에너지가 많을수록 온도가 더 빠르게 올라간다.',
-    ],
-
-    quiz: {
-      q: '태양 복사 에너지를 흡수하면 물질의 온도는 어떻게 달라질까?',
-      hint: '흡수가 일어나는 곳의 온도계와 분자 움직임을 관찰해 보세요.',
-      options: ['올라간다', '내려간다', '변하지 않는다'],
-      answer: 0,
-      explain: () => {
-        const e = M.energy || {};
-        return `흡수된 복사 에너지는 물질의 내부 에너지(분자 운동)를 증가시키므로 온도가 올라갑니다. ` +
-          `이 모형에서 지표는 입사 100 중 약 ${(e.gAbs || 0).toFixed(1)}, 수증기는 ${(e.h2o || 0).toFixed(1)}, 오존은 ${(e.o3 || 0).toFixed(1)}을 흡수하여, 흡수량이 많은 지표의 온도가 가장 빠르게 오릅니다. ` +
-          `반면 반사된 에너지는 진행 방향만 바뀌어 되돌아가므로 물체의 온도를 높이지 않습니다.`;
-      },
+    principle() {
+      return {
+        sun: [
+          '태양은 표면 온도가 약 5800 K로 높아, 최대 에너지 파장이 약 0.5 μm(가시광선)인 단파 복사를 주로 방출한다.',
+          '대기의 기체는 특정 파장만 골라 흡수한다: 오존·산소는 파장이 짧은 자외선, 수증기·이산화 탄소는 적외선의 특정 파장대.',
+          '가시광선은 대기에 거의 흡수되지 않아 대부분 지표까지 도달하고, 지표가 이를 흡수한다.',
+        ],
+        earth: [
+          '지구는 표면 온도가 약 288 K로 낮아, 최대 에너지 파장이 약 10 μm인 적외선(장파 복사)을 방출한다.',
+          '수증기·이산화 탄소·메테인·산화 이질소 같은 온실 기체가 특정 적외선을 흡수했다가 여러 방향으로 재방출하고, 그 일부가 지표로 향한다.',
+          '그래서 지표가 더 따뜻하게 유지된다(온실 효과). 흡수가 약한 8~13 μm의 대기의 창으로는 상당 부분이 우주로 빠져나간다.',
+        ],
+        compare: [
+          '물체는 표면 온도에 따라 방출하는 복사 에너지의 파장 분포가 다르다.',
+          '온도가 높을수록 최대 에너지 파장이 짧아진다(빈의 변위 법칙: λmax ≈ 2898 μm·K ÷ T).',
+          '태양(약 5800 K)은 약 0.5 μm의 단파 복사를, 지구(약 288 K)는 약 10 μm의 장파 복사를 주로 방출한다.',
+        ],
+      }[this.s.scene];
     },
+    principleBasic() {
+      return {
+        sun: ['태양 복사는 위에서 아래로 들어오는 단파 복사(최대 약 0.5 μm)이다.', '오존·산소는 자외선, 수증기·이산화 탄소는 적외선의 일부 파장만 흡수한다.', '가시광선은 대부분 흡수되지 않고 지표까지 도달한다.'],
+        earth: ['지구 복사는 지표에서 위로 방출되는 장파 복사(적외선, 최대 약 10 μm)이다.', '온실 기체가 특정 적외선을 흡수했다가 여러 방향으로 다시 내보내고, 일부는 지표로 돌아온다 → 온실 효과.', '8~13 μm(대기의 창)는 흡수가 약해 상당 부분이 우주로 빠져나간다.'],
+        compare: ['표면 온도가 다르면 방출하는 복사의 파장이 다르다.', '온도가 높을수록 최대 에너지 파장이 짧다.', '태양 ≈ 0.5 μm(단파 복사), 지구 ≈ 10 μm(장파 복사).'],
+      }[this.s.scene];
+    },
+
+    quiz: [
+      {
+        q: '태양 복사 에너지와 지구 복사 에너지 중 최대 에너지 파장이 더 긴 것은?',
+        hint: '‘스펙트럼 비교’에서 두 곡선의 꼭대기 위치를 비교해 보세요.',
+        options: ['태양 복사 에너지', '지구 복사 에너지', '둘이 같다'],
+        answer: 1,
+        explain: `표면 온도가 낮을수록 최대 에너지 파장이 길어집니다(빈의 변위 법칙). 태양(약 ${T_SUN} K)은 약 ${peak(T_SUN).toFixed(1)} μm, 지구(약 ${T_EARTH} K)는 약 ${peak(T_EARTH).toFixed(0)} μm에서 가장 강하게 방출하므로 지구 복사의 최대 에너지 파장이 약 20배 더 깁니다.`,
+      },
+      {
+        q: '태양 복사 에너지의 가시광선은 대기에서 대부분 흡수될까, 지표까지 도달할까?',
+        hint: '태양 복사 장면에서 ‘가시광선’을 고르고 광선이 어디까지 가는지 보세요.',
+        options: ['대기에서 대부분 흡수된다', '대부분 지표까지 도달한다'],
+        answer: 1,
+        explain: '가시광선 파장(약 0.4~0.7 μm)에서는 대기 기체의 흡수가 매우 약해, 가시광선은 대부분 대기를 통과해 지표까지 도달하고 지표에 흡수됩니다. 오존·산소는 자외선을, 수증기·이산화 탄소는 적외선의 특정 파장을 흡수합니다.',
+      },
+      {
+        q: '지구 복사 에너지의 적외선이 대기의 온실 기체에 흡수되면 어떤 현상이 나타날까?',
+        hint: '지구 복사 장면에서 흡수된 뒤 다시 나오는 빛이 어느 방향으로 가는지 보세요.',
+        options: ['온실 기체가 에너지를 흡수했다가 여러 방향으로 재방출하고, 그 일부가 지표로 돌아와 지표가 더 따뜻하게 유지된다', '적외선이 모두 우주로 빠져나가 지표가 빠르게 식는다', '흡수된 에너지는 사라져 지표 온도에 아무 영향이 없다'],
+        answer: 0,
+        explain: '온실 기체는 흡수한 적외선 에너지를 모든 방향으로 다시 방출합니다. 그중 지표로 향한 복사가 지표를 다시 데우므로 지표는 대기가 없을 때보다 따뜻하게 유지됩니다. 이것이 온실 효과입니다(재방출이 지표 방향으로만 일어나는 것은 아닙니다).',
+      },
+      {
+        q: '대기의 창을 통해 지구 복사 에너지가 우주로 빠져나갈 수 있는 이유는?',
+        hint: '지구 복사 장면에서 ‘대기의 창’을 고르고 그래프의 8~13 μm 구간을 보세요.',
+        options: ['8~13 μm 파장에서는 온실 기체의 흡수가 상대적으로 약하기 때문', '대기의 창 영역에는 대기가 없기 때문', '이 파장의 복사는 지구가 아니라 태양에서 오기 때문'],
+        answer: 0,
+        explain: '8~13 μm 구간은 수증기·이산화 탄소 같은 온실 기체가 거의 흡수하지 않는 파장이라, 지구 복사의 상당 부분이 대기를 통과해 우주로 빠져나갑니다. 다만 9.6 μm 부근은 오존이 흡수하는 등 완전히 투명한 구간은 아닙니다.',
+      },
+    ],
 
     init(app) {
       this.app = app;
-      this.s = { ...this.defaults };
       this.lv = app.level;
+      this.s = { scene: 'sun', sel: { sun: 'all', earth: 'all' } };
       this.fx = new SR.Effects();
-      this.buildPanel();
-      this.recompute();
-      // 상대값 기준: 기본 조건에서 지표가 도달하는 최종 온도 상승 = 100
-      this.Tref = HEAT * this.energy.gAbs * TAU_COOL;
       this.makeMolecules();
+      this.buildPanel();
       this.reset();
     },
-
-    reset() {
-      this.ph = [];
-      this.fx.clear();
-      this.acc = 0;
-      this.time = 0;
-      this.T = { o3: 0, h2o: 0, gnd: 0 };
-      this.pulse = { o3: 0, h2o: 0, gnd: 0 };
-      this.hist = [{ t: 0, o3: 0, h2o: 0, gnd: 0 }];
-      this.sampleAcc = 0;
-      this.liveAcc = 0;
-      this.anim = 0;
-      this.seqI = 0;
-    },
-
     setLevel(lv) {
       this.lv = lv;
-      SCENE_W = lv === 'basic' ? SR.W : 690;
-      this.ph = [];
-      this.fx.clear();
       this.bgKey = null;
       this.app.markDirty();
     },
-    rel(k) { return (this.T[k] / this.Tref) * 100; },
-    relWord(v) { return v < 4 ? '거의 그대로' : v < 25 ? '조금 상승' : v < 60 ? '상승' : '많이 상승'; },
-
-    restoreDefaults() {
-      Object.assign(this.s, this.defaults);
-      this.ctl.band.set('all', true);
-      this.ctl.o3.set(100, true);
-      this.ctl.h2o.set(100, true);
-      this.ctl.alb.set(15, true);
-      this.change = '';
-      this.onChange();
+    reset() {
+      this.ph = [];
+      this.fx.clear();
+      this.acc = 0.6;
+      this.seqI = 0;
+      this.back = 0; // 지표로 돌아온 재방출 복사(정성적 표시용)
+      this.t = 0;
+      this.lastMark = null;
     },
+    sel() { return this.s.scene === 'compare' ? null : this.s.sel[this.s.scene]; },
 
     /* ---------------- 조절 패널 ---------------- */
     buildPanel() {
       const ui = SR.ui;
       const p = SR.el('div', 'pnl');
-      this.ctl = {};
-      const s1 = ui.section('조건 바꾸기');
-      this.ctl.band = ui.segmented({
-        label: '비추는 빛 (파장 영역)',
-        grid: true,
-        value: this.s.band,
-        options: [
-          { value: 'all', label: '전체 햇빛', swatch: 'linear-gradient(90deg,#c4a0ff,#5aa8ff,#7dff8a,#ffd166,#ff6b5a,#a33a5a)' },
-          { value: 'uv', label: '자외선만', swatch: '#c4a0ff' },
-          { value: 'vis', label: '가시광선만', swatch: 'linear-gradient(90deg,#5aa8ff,#7dff8a,#ffd166,#ff6b5a)' },
-          { value: 'ir', label: '적외선만', swatch: '#a33a5a' },
-        ],
-        onChange: (v, prev) => {
-          const before = this.energy;
-          this.s.band = v;
-          this.recompute();
-          this.change = `비추는 빛을 ‘${BAND[prev].name}’ → ‘${BAND[v].name}’${SR.j(BAND[v].name, '로').slice(BAND[v].name.length)} 바꾸었습니다. 입사 에너지가 ${before.inc.toFixed(1)} → ${SR.j(this.energy.inc.toFixed(1), '이')} 되고, ` +
-            `흡수하는 곳도 달라집니다(오존 ${this.energy.o3.toFixed(1)}, 수증기 ${this.energy.h2o.toFixed(1)}, 지표 ${this.energy.gAbs.toFixed(1)}).`;
-          this.ph = [];
-          this.onChange(true);
+      const s0 = ui.section('장면');
+      this.ctlScene = ui.segmented({
+        value: this.s.scene,
+        options: [{ value: 'sun', label: '태양 복사' }, { value: 'earth', label: '지구 복사' }, { value: 'compare', label: '스펙트럼 비교' }],
+        onChange: (v) => {
+          this.s.scene = v;
+          this.reset();
+          this.change = { sun: '태양 복사: 태양에서 온 단파 복사가 대기 위쪽에서 아래로 들어옵니다.', earth: '지구 복사: 지표가 방출한 장파 복사(적외선)가 지표에서 위쪽으로 나갑니다.', compare: '태양 복사와 지구 복사의 파장 분포를 나란히 비교합니다.' }[v];
+          this.paintSel();
+          this.onChange();
         },
       });
-      this.ctl.o3 = ui.slider({
-        label: '오존의 양', min: 0, max: 200, step: 5, value: this.s.o3, unit: '%',
-        ends: ['없음', '현재의 2배'],
-        onInput: (v, base) => {
-          const b = this.energy;
-          this.s.o3 = v;
-          this.recompute();
-          if (base != null && base !== v) this.change = `오존을 ${base}% → ${v}%로 ${v > base ? '늘리자' : '줄이자'} 오존이 흡수하는 에너지가 ${b.o3.toFixed(1)} → ${SR.j(this.energy.o3.toFixed(1), '이')} 되었고, 지표에 도달하는 자외선은 ${v > base ? '줄었습니다' : '늘었습니다'}.`;
-          this.onChange(true);
-        },
-      });
-      this.ctl.h2o = ui.slider({
-        label: '수증기의 양', min: 0, max: 200, step: 5, value: this.s.h2o, unit: '%',
-        ends: ['건조', '습윤'],
-        onInput: (v, base) => {
-          const b = this.energy;
-          this.s.h2o = v;
-          this.recompute();
-          if (base != null && base !== v) this.change = `수증기를 ${base}% → ${v}%로 ${v > base ? '늘리자' : '줄이자'} 수증기가 흡수하는 적외선 에너지가 ${b.h2o.toFixed(1)} → ${SR.j(this.energy.h2o.toFixed(1), '이')} 되었습니다. 흡수대 밖의 파장은 거의 그대로 통과합니다.`;
-          this.onChange(true);
-        },
-      });
-      this.ctl.alb = ui.slider({
-        label: '지표 반사율', min: 5, max: 40, value: this.s.alb, unit: '%',
-        ends: ['5%', '40%'],
-        hint: '지표에 도달한 빛 중 반사되는 비율 — 반사된 빛은 지표를 데우지 않습니다.',
-        onInput: (v, base) => {
-          const b = this.energy;
-          this.s.alb = v;
-          this.recompute();
-          if (base != null && base !== v) this.change = `지표 반사율을 ${base}% → ${v}%로 바꾸자 지표가 흡수하는 에너지가 ${b.gAbs.toFixed(1)} → ${SR.j(this.energy.gAbs.toFixed(1), '이')} 되었습니다. 그래서 지표 온도가 오르는 빠르기도 ${v > base ? '느려집니다' : '빨라집니다'}.`;
-          this.onChange(true);
-        },
-      });
-      [this.ctl.o3, this.ctl.h2o, this.ctl.alb].forEach((c) => c.el.classList.add('adv-only'));
-      const bh = SR.el('p', 'ctl-hint basic-only', '빛의 종류를 골라, 어디에서 흡수되고 어느 곳의 온도가 오르는지 관찰하세요. 광선 몇 개는 대표로 보여 준 것이며 개수가 에너지 비율을 뜻하지는 않습니다.');
-      s1.append(this.ctl.band.el, bh, this.ctl.o3.el, this.ctl.h2o.el, this.ctl.alb.el);
+      s0.appendChild(this.ctlScene.el);
+      this.secSel = ui.section('기체 선택', '고른 기체가 흡수하는 파장이 그래프와 장면에서 함께 강조됩니다.');
+      this.selWrap = SR.el('div');
+      this.secSel.appendChild(this.selWrap);
+      this.selInfo = SR.el('p', 'ctl-hint');
+      this.secSel.appendChild(this.selInfo);
 
-      const s2 = ui.section('에너지 출입 (전체 태양 복사 = 100)', '스펙트럼을 적분해 계산한 값입니다.');
-      const dl = SR.el('dl', 'ro-list');
-      dl.innerHTML = [
-        ['inc', '입사 에너지', '#ffd166'],
-        ['o3', '오존이 흡수', SR.css(COL.o3)],
-        ['h2o', '수증기가 흡수', SR.css(COL.h2o)],
-        ['arr', '지표에 도달', '#e8eef9'],
-        ['gRef', '└ 지표가 반사', SR.css(COL.ref)],
-        ['gAbs', '└ 지표가 흡수', SR.css(COL.gnd)],
-      ].map(([k, n, c]) => `<dt><i style="background:${c}"></i>${n}</dt><dd data-k="${k}"></dd>`).join('');
-      this.ro = dl;
-      s2.appendChild(dl);
-      s2.appendChild(SR.el('p', 'ctl-hint', '※ 학습용 단순화 모형: 산란·구름·이산화 탄소 등 다른 기체의 흡수는 제외했습니다.'));
-      s2.appendChild(SR.el('p', 'ctl-hint', '※ 온도는 실제 °C가 아닌 <b>상대값</b>입니다. 가정: 세 곳은 같은 양의 물질(같은 열용량)이고, 흡수한 에너지에 비례해 데워지며, 온도가 오를수록 열을 내보내 점차 일정해집니다. 기본 조건에서 지표의 최종값을 100으로 정했습니다.'));
+      const s2 = ui.section('기체별 주요 흡수 파장', '대표적인 흡수대를 단순화한 정성적 표현이며, 흡수율(%) 수치는 표시하지 않습니다.');
+      const tb = SR.el('table', 'ro-table');
+      const dot = (c) => `<i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></i>`;
+      tb.innerHTML = '<thead><tr><th>기체</th><th style="text-align:left">주로 흡수하는 파장</th></tr></thead><tbody>' +
+        GAS_ORDER.map((k) => `<tr data-g="${k}"><td>${dot(SR.css(GAS[k].col))}${GAS[k].name}</td><td style="text-align:left;font-size:13px">${GAS[k].bands}</td></tr>`).join('') +
+        `<tr data-g="win"><td>${dot('#4ade80')}대기의 창</td><td style="text-align:left;font-size:13px">8~13 μm: 흡수가 약함(9.6 μm 오존 흡수 등 예외)</td></tr></tbody>`;
+      this.table = tb;
+      s2.appendChild(tb);
       s2.classList.add('adv-only');
-      const foot = SR.el('div', 'pnl-foot adv-only');
-      foot.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
-      p.append(s1, s2, foot);
+      p.append(s0, this.secSel, s2);
       this.panel = p;
+      this.paintSel();
     },
-
-    onChange(keepPhotons) {
-      if (!keepPhotons) this.ph = [];
+    paintSel() {
+      const sc = this.s.scene;
+      this.selWrap.innerHTML = '';
+      this.secSel.style.display = sc === 'compare' ? 'none' : '';
+      if (sc === 'compare') return;
+      this.ctlSel = SR.ui.segmented({
+        grid: true,
+        value: this.s.sel[sc],
+        options: SEL[sc].map((o) => ({ value: o.v, label: o.label, swatch: o.sw })),
+        onChange: (v) => {
+          this.s.sel[sc] = v;
+          this.ph = this.ph.filter((q) => q.re); // 새 선택에 맞는 대표 광선부터 다시
+          this.seqI = 0;
+          this.acc = 0.8;
+          this.change = this.selText(v, sc);
+          this.paintSel();
+          this.onChange();
+        },
+      });
+      this.selWrap.appendChild(this.ctlSel.el);
+      const v = this.s.sel[sc];
+      this.selInfo.innerHTML = GAS[v] ? `<b>${GAS[v].name}</b>: ${GAS[v].bands}` : v === 'win' ? '<b>대기의 창</b>: 8~13 μm, 온실 기체의 흡수가 약한 구간(완전히 투명하지는 않음)' : v === 'vis' ? '<b>가시광선</b>: 0.4~0.7 μm, 대기에 거의 흡수되지 않음' : '모든 기체의 흡수를 함께 봅니다.';
+      if (this.table) this.table.querySelectorAll('tr[data-g]').forEach((tr) => tr.classList.toggle('hl', tr.dataset.g === v));
+    },
+    selText(v, sc) {
+      if (sc === 'sun') return {
+        all: '전체: 자외선 일부는 위쪽 오존층에서, 적외선 일부는 수증기·이산화 탄소에 흡수되고, 가시광선은 대부분 지표까지 갑니다.',
+        o3: '오존·산소를 골랐습니다: 그래프의 자외선 쪽(약 0.3 μm 이하)이 강조되고, 그 파장의 광선이 대기 위쪽에서 흡수됩니다. 파장이 조금 더 긴 자외선은 일부 지표까지 옵니다.',
+        h2o: '수증기를 골랐습니다: 적외선의 여러 좁은 띠(1.4·1.9·2.7 μm 등)에서만 흡수되고, 띠 사이의 적외선은 통과합니다.',
+        co2: '이산화 탄소를 골랐습니다: 태양 복사에서는 2.7 μm 부근 등 일부 적외선만 흡수합니다.',
+        vis: '가시광선을 골랐습니다: 대기 기체의 흡수가 거의 없어 대부분 지표까지 도달합니다.',
+      }[v];
+      return {
+        all: '전체: 온실 기체가 흡수하는 파장은 흡수·재방출되고, 대기의 창(8~13 μm) 파장은 상당 부분 우주로 빠져나갑니다.',
+        h2o: '수증기를 골랐습니다: 6.3 μm 부근과 약 18 μm보다 긴 적외선을 강하게 흡수합니다.',
+        co2: '이산화 탄소를 골랐습니다: 지구 복사가 강한 15 μm 부근을 강하게 흡수합니다.',
+        ch4: '메테인을 골랐습니다: 7.7 μm 부근을 흡수합니다.',
+        n2o: '산화 이질소를 골랐습니다: 7.8 μm, 17 μm 부근 등을 흡수합니다.',
+        win: '대기의 창을 골랐습니다: 8~13 μm의 적외선은 대부분 우주로 빠져나가지만, 9.6 μm 부근은 오존이 일부 흡수합니다.',
+      }[v];
+    },
+    onChange() {
       this.bgKey = null;
+      this.app.renderPrinciple();
       this.app.markDirty();
       this.app.refreshLive();
     },
 
-    /* ---------------- 계산 ---------------- */
-    recompute() {
-      const s = this.s;
-      const b = BAND[s.band];
-      const kO = s.o3 / 100, kH = s.h2o / 100, a = s.alb / 100;
-      this.T1 = T_O3.map((t) => Math.exp(-t * kO));
-      this.T2 = T_H2O.map((t) => Math.exp(-t * kH));
-      let inc = 0, o3 = 0, h2o = 0, arr = 0;
-      const cdf = [];
-      for (let i = 0; i < GRID.length; i++) {
-        const l = GRID[i];
-        const S = l >= b.lo && l < b.hi ? TOA[i] : 0;
-        inc += S;
-        o3 += S * (1 - this.T1[i]);
-        h2o += S * this.T1[i] * (1 - this.T2[i]);
-        arr += S * this.T1[i] * this.T2[i];
-        cdf.push(inc);
-      }
-      this.cdf = cdf;
-      const f = 100 / TOA_SUM;
-      this.energy = { inc: inc * f, o3: o3 * f, h2o: h2o * f, arr: arr * f, gRef: arr * f * a, gAbs: arr * f * (1 - a) };
-      // 그래프용 곡선 (로그 파장 축)
-      const N = 260;
-      this.curve = [];
-      for (let j = 0; j <= N; j++) {
-        const l = L0 * Math.pow(L1 / L0, j / N);
-        const i = SR.clamp(Math.round(l - L0 - 0.5), 0, GRID.length - 1);
-        // 좁은 띠는 ±3 nm 평균으로 부드럽게
-        let s0 = 0, s1 = 0, s2 = 0, n = 0;
-        for (let k = Math.max(0, i - 3); k <= Math.min(GRID.length - 1, i + 3); k++) {
-          s0 += TOA[k]; s1 += TOA[k] * this.T1[k]; s2 += TOA[k] * this.T1[k] * this.T2[k]; n++;
-        }
-        this.curve.push({ l, top: s0 / n / TOA_MAX, ao: s1 / n / TOA_MAX, sf: s2 / n / TOA_MAX });
-      }
-      this.updateReadouts();
-    },
-
-    updateReadouts() {
-      if (!this.ro) return;
-      for (const k in this.energy) {
-        const el = this.ro.querySelector(`[data-k=${k}]`);
-        if (el) el.textContent = this.energy[k].toFixed(1);
-      }
-    },
-
-    sampleLambda() {
-      const tot = this.cdf[this.cdf.length - 1];
-      if (tot <= 0) return 550;
-      const u = Math.random() * tot;
-      let lo = 0, hi = this.cdf.length - 1;
-      while (lo < hi) {
-        const m = (lo + hi) >> 1;
-        if (this.cdf[m] < u) lo = m + 1; else hi = m;
-      }
-      return GRID[lo];
-    },
-
-    /* ---------------- 설명 ---------------- */
-    live() {
-      const e = this.energy;
-      const T = this.T;
-      let t = '';
-      if (this.s.band === 'all' || this.s.band === 'uv') t += `오존은 주로 <b>자외선</b>을 흡수해 입사 100 중 <b>${e.o3.toFixed(1)}</b>${SR.j(e.o3.toFixed(1), '을').slice(-1)} 흡수합니다. `;
-      if (this.s.band === 'all' || this.s.band === 'ir') t += `수증기는 <b>적외선의 특정 파장대</b>만 골라 <b>${e.h2o.toFixed(1)}</b>${SR.j(e.h2o.toFixed(1), '을').slice(-1)} 흡수합니다. `;
-      if (this.s.band === 'vis') t += `가시광선은 오존·수증기에 거의 흡수되지 않고(오존 ${e.o3.toFixed(1)}, 수증기 ${e.h2o.toFixed(1)}) 대부분 지표까지 도달합니다. `;
-      t += `지표에는 ${SR.j(e.arr.toFixed(1), '이')} 도달해 그중 ${SR.j(e.gRef.toFixed(1), '은')} 반사되고 <b>${e.gAbs.toFixed(1)}</b>${SR.j(e.gAbs.toFixed(1), '이').slice(-1)} 흡수됩니다. `;
-      t += `온도 상승(상대값, 실제 °C 아님): 지표 <b>${Math.round(this.rel('gnd'))}</b>, 수증기층 <b>${Math.round(this.rel('h2o'))}</b>, 오존층 <b>${Math.round(this.rel('o3'))}</b> — 흡수한 에너지가 많을수록 더 빨리, 더 많이 데워집니다.`;
-      return { now: t, change: this.change };
-    },
     liveBasic() {
-      const b = this.s.band;
-      const where = { all: '오존은 자외선 일부, 수증기는 적외선 일부를 흡수하고 나머지는 대부분 지표가 흡수합니다', uv: '자외선의 일부(파장이 짧은 쪽)는 오존층에서 흡수되고, 나머지는 지표까지 옵니다', vis: '가시광선은 대기에 거의 흡수되지 않고 지표까지 와서 흡수됩니다', ir: '적외선의 일부 파장은 수증기가 흡수하고, 나머지는 지표가 흡수합니다' }[b];
-      const g = this.relWord(this.rel('gnd')), w = this.relWord(this.rel('h2o')), o = this.relWord(this.rel('o3'));
-      return { now: `${where}. 지금 온도: 지표 <b>${g}</b> · 수증기층 <b>${w}</b> · 오존층 <b>${o}</b> — 흡수한 에너지가 많은 곳일수록 더 많이 데워집니다.`, change: '' };
+      const sc = this.s.scene;
+      let now;
+      if (sc === 'compare') now = `태양(약 ${T_SUN} K)의 최대 에너지 파장은 약 <b>${peak(T_SUN).toFixed(1)} μm</b>, 지구(약 ${T_EARTH} K)는 약 <b>${peak(T_EARTH).toFixed(0)} μm</b> → 온도가 높은 태양은 단파 복사, 온도가 낮은 지구는 장파 복사를 주로 방출합니다.`;
+      else now = this.selText(this.sel(), sc) + (sc === 'earth' && this.back > 0.3 ? ' 지금 대기에서 다시 내보낸 복사 일부가 <b>지표로 돌아오고</b> 있습니다(온실 효과).' : '');
+      return { now, change: '' };
+    },
+    live() {
+      const L = this.liveBasic();
+      return { now: L.now + (this.lastMark ? ` 방금 관찰한 광선: <b>${fmtL(this.lastMark.l)}</b> → ${this.lastMark.text}.` : ''), change: this.change };
     },
 
-    /* ---------------- 애니메이션 ---------------- */
+    /* ---------------- 분자 배치 ---------------- */
     makeMolecules() {
-      const rnd = SR.rng(5);
-      this.mol = { o3: [], h2o: [], gnd: [] };
-      for (let i = 0; i < 40; i++) this.mol.o3.push({ u: rnd(), y: OZ.y0 + 10 + rnd() * (OZ.y1 - OZ.y0 - 20), r: rnd() * 6.28, ph: rnd() * 6.28 });
-      for (let i = 0; i < 66; i++) {
-        const y = WV.y1 - 8 - (WV.y1 - WV.y0 - 16) * Math.pow(rnd(), 1.6);
-        this.mol.h2o.push({ u: rnd(), y, r: rnd() * 6.28, ph: rnd() * 6.28 });
+      const rnd = SR.rng(31);
+      const N = { o3: 16, h2o: 24, co2: 12, ch4: 8, n2o: 8 };
+      this.mol = {};
+      for (const k of GAS_ORDER) {
+        this.mol[k] = [];
+        for (let i = 0; i < N[k]; i++) {
+          const [y0, y1] = GAS_Y[k];
+          const u = rnd();
+          const y = k === 'h2o' ? y1 - (y1 - y0) * Math.pow(u, 1.5) : y0 + (y1 - y0) * u;
+          this.mol[k].push({ x: 24 + rnd() * (SW - 60), y, ph: rnd() * 6.28, r: rnd() * 6.28, glow: 0 });
+        }
       }
-      for (let r = 0; r < 6; r++) for (let c = 0; c < 64; c++) this.mol.gnd.push({ x: 14 + c * 18 + (r % 2) * 9, y: GND + 26 + r * 22, ph: rnd() * 6.28 });
     },
+    gasesIn(sc) { return sc === 'sun' ? ['o3', 'h2o', 'co2'] : ['h2o', 'co2', 'ch4', 'n2o', 'o3']; },
 
+    /* ---------------- 대표 광선 ---------------- */
+    nextLambda() {
+      const sc = this.s.scene, v = this.sel();
+      if (this.lv !== 'basic' && v === 'all') {
+        // 심화·전체: 실제 방출 스펙트럼에 비례해 파장을 고름(로그 파장 축 기준)
+        const [a, b] = sc === 'sun' ? [0.2, 4] : [4, 50];
+        const peakVal = sc === 'sun' ? 0.65 : 12;
+        for (let i = 0; i < 60; i++) {
+          const l = a * Math.pow(b / a, Math.random());
+          if (Math.random() < (spec(l, sc) * l) / peakVal) return l;
+        }
+        return sc === 'sun' ? 0.5 : 10;
+      }
+      const list = REP[sc][v];
+      return list[this.seqI++ % list.length];
+    },
+    // 흡수 여부와 흡수한 기체: 흡수 확률 = 그 파장에서 대기 전체의 흡수 정도
+    fate(l, sc) {
+      const gases = this.gasesIn(sc);
+      const As = gases.map((k) => GAS[k].A(l));
+      const tot = 1 - As.reduce((p, a) => p * (1 - a), 1);
+      if (Math.random() >= tot) return null;
+      let u = Math.random() * As.reduce((s, a) => s + a, 0);
+      for (let i = 0; i < gases.length; i++) { u -= As[i]; if (u <= 0) return gases[i]; }
+      return gases[gases.length - 1];
+    },
     emit() {
-      if (this.energy.inc <= 0) return;
-      const l = this.sampleLambda();
-      const i = SR.clamp(Math.round(l - L0 - 0.5), 0, GRID.length - 1);
-      const x0 = SR.rand(-10, SCENE_W - 220);
-      let fate = 'gnd', fy = GND;
-      if (Math.random() < 1 - this.T1[i]) { fate = 'o3'; fy = SR.rand(OZ.y0 + 8, OZ.y1 - 8); }
-      else if (Math.random() < 1 - this.T2[i]) { fate = 'h2o'; const r = Math.random(); fy = WV.y1 - (WV.y1 - WV.y0) * r * r; }
-      const col = SR.waveColor(l);
-      this.ph.push({
-        x: x0, y: -12, vx: DIR[0] * SPEED, vy: DIR[1] * SPEED, l, fate, fy, state: 0, trail: [], col, a: 1,
-        w: l > 700 ? 1.8 : 2, r: l > 700 || l < 400 ? 2.4 : 2.6, dash: l > 700 ? [5, 4] : l < 400 ? [2, 3] : null,
-      });
+      const sc = this.s.scene;
+      if (sc === 'compare') return;
+      const l = this.nextLambda();
+      const gas = this.fate(l, sc);
+      const col = colOf(l);
+      this.slot = ((this.slot || 0) + 0.37) % 1;
+      const speed = 210;
+      let p;
+      if (sc === 'sun') {
+        const L = Math.hypot(0.24, 1);
+        p = { x: 50 + this.slot * (SW - 270), y: -12, vx: (0.24 / L) * speed, vy: (1 / L) * speed };
+        p.fy = gas ? SR.rand(...GAS_Y[gas]) : GND;
+      } else {
+        const a = (Math.random() - 0.5) * 0.6;
+        p = { x: 70 + this.slot * (SW - 170), y: GND - 2, vx: Math.sin(a) * speed, vy: -Math.cos(a) * speed };
+        p.fy = gas ? SR.rand(...GAS_Y[gas]) : -20;
+      }
+      Object.assign(p, { l, gas, sc, col, dash: dashOf(l), trail: [], a: 1, w: 2.6, r: 3, state: 0, life: 0 });
+      this.ph.push(p);
     },
-
-    // 기본 모드: 대표 광선을 정해진 순서로 하나씩
-    emitBasic() {
-      const seq = BASIC_SEQ[this.s.band];
-      const kind = seq[this.seqI++ % seq.length];
-      const [band, fate0] = kind.split('_');
-      const l = band === 'uv' ? (fate0 === 'o3' ? 290 : 365) : band === 'ir' ? (fate0 === 'h2o' ? 1380 : 1050) : SR.rand(450, 640);
-      let fate = 'gnd', fy = GND, refl = false;
-      if (fate0 === 'o3') { fate = 'o3'; fy = SR.rand(OZ.y0 + 14, OZ.y1 - 14); }
-      else if (fate0 === 'h2o') { fate = 'h2o'; fy = SR.rand(WV.y1 - 120, WV.y1 - 20); }
-      else if (fate0 === 'ref') refl = true;
-      const slot = (this.seqI % 4) / 4;
-      const x0 = 60 + slot * (SCENE_W - 420) + SR.rand(0, 60);
-      const col = SR.waveColor(l);
-      this.ph.push({
-        x: x0, y: -12, vx: DIR[0] * SPEED, vy: DIR[1] * SPEED, l, fate, fy, refl, state: 0, trail: [], col, a: 1,
-        w: 3, r: 3.4, dash: l > 700 ? [8, 5] : l < 400 ? [3, 4] : null, basic: true,
-      });
+    reemit(p) {
+      // 흡수한 기체가 적외선을 여러 방향으로 다시 방출(지표 방향만이 아님)
+      const th0 = Math.random() * Math.PI * 2;
+      for (let i = 0; i < 2; i++) {
+        const th = th0 + i * Math.PI + (Math.random() - 0.5) * 0.8;
+        this.ph.push({ x: p.x, y: p.y, vx: Math.cos(th) * 190, vy: Math.sin(th) * 190, l: p.l, re: true, col: [255, 170, 110], dash: [4, 4], trail: [p.x, p.y], a: 0.95, w: 2, r: 2.6, state: 0, life: 0 });
+      }
+      this.fx.add({ type: 'ring', x: p.x, y: p.y, col: [255, 170, 110], r0: 3, r1: 16, dur: 0.6, lw: 2 });
+    },
+    glowMol(gas, x, y) {
+      let best = null, bd = 1e9;
+      for (const m of this.mol[gas]) { const d = Math.hypot(m.x - x, m.y - y); if (d < bd) { bd = d; best = m; } }
+      if (best) best.glow = 1;
     },
 
     update(dt) {
-      this.time += dt;
-      this.anim += dt;
-      if (this.lv === 'basic') {
-        this.acc += 1.3 * dt;
-        while (this.acc >= 1) { this.acc -= 1; this.emitBasic(); }
-      } else {
-        this.acc += 16 * dt;
+      this.t += dt;
+      if (this.s.scene !== 'compare') {
+        this.acc += (this.lv === 'basic' ? 1.15 : 2.4) * dt;
         while (this.acc >= 1) { this.acc -= 1; this.emit(); }
       }
-      // 온도: dT/dt = (흡수 에너지)·k − T/τ
-      const e = this.energy;
-      const P = { o3: e.o3, h2o: e.h2o, gnd: e.gAbs };
-      for (const k in this.T) {
-        this.T[k] += (HEAT * P[k] - this.T[k] / TAU_COOL) * dt;
-        this.pulse[k] = Math.max(0, this.pulse[k] - dt * 1.5);
-      }
-      this.sampleAcc += dt;
-      if (this.sampleAcc >= 0.25) {
-        this.sampleAcc = 0;
-        this.hist.push({ t: this.time, ...this.T });
-        if (this.hist.length > 1200) this.hist.shift();
-      }
-      this.liveAcc += dt;
-      if (this.liveAcc > 0.5) { this.liveAcc = 0; this.app.refreshLive(); }
-
+      for (const k of GAS_ORDER) for (const m of this.mol[k]) m.glow = Math.max(0, m.glow - dt * 0.9);
+      this.back = Math.max(0, this.back - dt * 0.25);
       const keep = [];
       for (const p of this.ph) {
-        SR.pushTrail(p, p.basic ? 22 : 8);
+        SR.pushTrail(p, p.re ? 40 : 18);
         if (p.state === 0) {
-          p.x += p.vx * dt;
-          p.y += p.vy * dt;
-          if (p.y >= p.fy) {
-            p.y = p.fy;
-            if (p.fate === 'gnd') {
-              if (p.basic ? p.refl : Math.random() < this.s.alb / 100) {
-                p.state = 2;
-                p.vx = SR.rand(-0.5, 0.6) * SPEED;
-                p.vy = -SPEED * 0.9;
-                p.trail.length = 0;
-                this.fx.add({ type: 'ring', x: p.x, y: p.y, col: COL.ref, r0: 2, r1: 12, dur: 0.45, lw: 1.8 });
-              } else {
-                p.state = 1;
-                p.t = 0;
-                this.pulse.gnd = Math.min(1, this.pulse.gnd + 0.08);
-                this.fx.add({ type: 'heat', x: p.x, y: p.y + 10, r1: 22, dur: 0.9 });
-              }
+          p.x += p.vx * dt; p.y += p.vy * dt;
+          if (p.re) {
+            if (p.y >= GND) { this.back = Math.min(1.5, this.back + 0.35); this.fx.add({ type: 'heat', x: p.x, y: GND + 8, r1: 26, dur: 1.1 }); continue; }
+            if (p.y < -20 || p.x < -20 || p.x > SW + 20) continue;
+          } else if (p.sc === 'sun' ? p.y >= p.fy : p.y <= p.fy) {
+            if (p.gas) {
+              p.state = 1; p.life = 0;
+              this.glowMol(p.gas, p.x, p.y);
+              this.fx.add({ type: 'heat', x: p.x, y: p.y, r1: 22, dur: 0.9 });
+              this.fx.add({ type: 'ring', x: p.x, y: p.y, col: GAS[p.gas].col, r0: 3, r1: 14, dur: 0.6, lw: 2 });
+              this.lastMark = { l: p.l, text: `${GAS[p.gas].name}에 흡수` };
+            } else if (p.sc === 'sun') {
+              this.fx.add({ type: 'heat', x: p.x, y: GND + 10, r1: 24, dur: 1 });
+              this.lastMark = { l: p.l, text: '대기를 통과해 지표에 흡수' };
+              p.state = 2; p.life = 0;
             } else {
-              p.state = 1;
-              p.t = 0;
-              this.pulse[p.fate] = Math.min(1, this.pulse[p.fate] + 0.25);
-              this.fx.add({ type: 'heat', x: p.x, y: p.y, r1: 20, dur: 0.9 });
+              const win = p.l >= 8 && p.l <= 13;
+              this.lastMark = { l: p.l, text: win ? '대기의 창을 지나 우주로' : '대기를 통과해 우주로' };
+              if (win) this.fx.add({ type: 'spark', x: p.x, y: 12, col: [74, 222, 128], r1: 14, dur: 0.8 });
+              continue;
             }
           }
+          if (p.x < -30 || p.x > SW + 30) continue;
         } else if (p.state === 1) {
-          // 흡수: 물질 속으로 들어가며 빛 → 열
-          p.t += dt;
-          p.x += p.vx * dt * 0.15;
-          p.y += p.vy * dt * 0.15;
-          const k = p.t / (p.basic ? 0.9 : 0.5);
-          p.a = Math.max(0, 1 - k);
-          p.col = [255, Math.round(SR.lerp(p.col[1], 140, 0.1)), Math.round(SR.lerp(p.col[2], 60, 0.1))];
-          if (k >= 1) continue;
+          // 흡수: 빛의 에너지가 기체에 전달되어 사라짐 → (지구 복사) 잠시 뒤 재방출
+          p.life += dt;
+          p.a = Math.max(0, 1 - p.life * 2.2);
+          if (p.life > 0.45) { if (p.sc === 'earth') this.reemit(p); continue; }
         } else {
-          p.x += p.vx * dt;
-          p.y += p.vy * dt;
-          if (p.y < -20) continue;
+          p.life += dt;
+          p.a = Math.max(0, 1 - p.life * 2.5);
+          if (p.a <= 0) continue;
         }
-        if (p.x > SCENE_W + 20) continue;
         keep.push(p);
       }
       this.ph = keep;
       this.fx.update(dt);
+      this._lt = (this._lt || 0) + dt;
+      if (this._lt > 0.5) { this._lt = 0; this.app.refreshLive(); }
     },
 
-    /* ---------------- 그리기 ---------------- */
-    lx(l) { return GX + (Math.log(l / L0) / Math.log(L1 / L0)) * GW; },
-
-    drawBackground(c) {
-      const g = c.createLinearGradient(0, 0, 0, SR.H);
+    /* ---------------- 그리기: 장면 ---------------- */
+    drawScene(c) {
+      const sc = this.s.scene;
+      const g = c.createLinearGradient(0, 0, 0, GND);
       g.addColorStop(0, '#040915');
-      g.addColorStop(0.3, '#0a1734');
-      g.addColorStop(0.75, '#16335f');
+      g.addColorStop(0.18, '#0a1734');
       g.addColorStop(1, '#1d3f6e');
       c.fillStyle = g;
-      c.fillRect(0, 0, SCENE_W, SR.H);
-      SR.drawStars(c, 3, 50, SCENE_W, 100);
-      // 오존층
+      c.fillRect(0, 0, SW, GND);
+      SR.drawStars(c, 3, 40, SW, 70);
       const og = c.createLinearGradient(0, OZ.y0, 0, OZ.y1);
       og.addColorStop(0, 'rgba(244,114,182,0)');
-      og.addColorStop(0.5, 'rgba(244,114,182,0.2)');
+      og.addColorStop(0.5, 'rgba(244,114,182,0.16)');
       og.addColorStop(1, 'rgba(244,114,182,0)');
       c.fillStyle = og;
-      c.fillRect(0, OZ.y0, SCENE_W, OZ.y1 - OZ.y0);
-      // 수증기(아래로 갈수록 많음)
-      const wg = c.createLinearGradient(0, WV.y0, 0, WV.y1);
+      c.fillRect(0, OZ.y0, SW, OZ.y1 - OZ.y0);
+      const wg = c.createLinearGradient(0, 330, 0, GND);
       wg.addColorStop(0, 'rgba(103,232,249,0)');
-      wg.addColorStop(1, `rgba(103,232,249,${0.08 + 0.1 * (this.s.h2o / 100)})`);
+      wg.addColorStop(1, 'rgba(103,232,249,0.12)');
       c.fillStyle = wg;
-      c.fillRect(0, WV.y0, SCENE_W, WV.y1 - WV.y0 + 20);
-      // 지표
+      c.fillRect(0, 330, SW, GND - 330);
+      c.setLineDash([6, 6]);
+      c.strokeStyle = 'rgba(170,200,255,0.4)';
+      c.beginPath(); c.moveTo(0, 70); c.lineTo(SW, 70); c.stroke();
+      c.setLineDash([]);
       const gg = c.createLinearGradient(0, GND, 0, SR.H);
-      gg.addColorStop(0, '#5a4630');
-      gg.addColorStop(0.15, '#3f3122');
-      gg.addColorStop(1, '#1d160f');
+      if (sc === 'earth') { gg.addColorStop(0, '#6a4024'); gg.addColorStop(1, '#2a160c'); }
+      else { gg.addColorStop(0, '#4d5a2c'); gg.addColorStop(1, '#1d200f'); }
       c.fillStyle = gg;
-      c.fillRect(0, GND, SCENE_W, SR.H - GND);
-      c.fillStyle = 'rgba(120,170,90,0.55)';
-      c.fillRect(0, GND - 3, SCENE_W, 5);
-      // 그래프 영역 바탕
-      c.fillStyle = '#071025';
-      c.fillRect(SCENE_W, 0, SR.W - SCENE_W, SR.H);
-      c.fillStyle = 'rgba(150,180,230,0.15)';
-      c.fillRect(SCENE_W, 0, 1.5, SR.H);
+      c.fillRect(0, GND, SW, SR.H - GND);
+      c.fillStyle = 'rgba(255,255,255,0.15)';
+      c.fillRect(0, GND, SW, 1.5);
+      SR.label(c, '우주', SW - 12, 28, { size: 15, align: 'right', color: 'rgba(200,215,240,0.75)' });
+      SR.label(c, '대기의 위쪽', SW - 12, 64, { size: 12, align: 'right', color: 'rgba(200,215,240,0.6)' });
+      SR.label(c, '오존층', SW - 12, OZ.y0 + 16, { size: 13, align: 'right', color: 'rgba(244,140,195,0.85)' });
+      SR.label(c, '지표', 14, GND + 26, { size: 15, color: 'rgba(240,220,190,0.9)' });
+      SR.label(c, '층의 높이·두께는 실제 비율이 아닙니다', SW - 10, SR.H - 10, { size: 12, align: 'right', color: 'rgba(230,220,200,0.6)' });
     },
 
     drawMolecules(ctx) {
-      const t = this.anim;
-      const amp = (k) => 0.6 + this.T[k] * 0.45 + this.pulse[k] * 3;
-      const ao = amp('o3'), ah = amp('h2o'), ag = amp('gnd');
-      const sO = this.s.o3 / 100, sH = this.s.h2o / 100;
-      const frac = SCENE_W / SR.W; // 장면 폭에 맞춘 분자 수
-      const MX = (m) => 20 + m.u * (SCENE_W - 150);
-      // 오존 O₃
-      const baseO = Math.round(this.mol.o3.length * frac);
-      const nO = Math.round(baseO * Math.min(1, sO));
-      const extraO = sO > 1;
-      this.mol.o3.forEach((m, i) => {
-        if (i >= nO) return;
-        const x = MX(m) + Math.sin(t * 9 + m.ph) * ao, y = m.y + Math.cos(t * 11 + m.ph) * ao;
-        const a = extraO ? 0.85 : 0.75;
-        ctx.fillStyle = `rgba(244,140,195,${a})`;
-        for (let j = 0; j < 3; j++) {
-          const an = m.r + j * 2.094 + Math.sin(t * 13 + m.ph) * 0.08 * ao;
-          ctx.beginPath(); ctx.arc(x + Math.cos(an) * 3.4, y + Math.sin(an) * 3.4, 2.4, 0, 6.2832); ctx.fill();
-        }
-      });
-      if (sO > 1) {
-        // 추가 분자
-        const extra = Math.round(baseO * (sO - 1));
-        for (let i = 0; i < extra; i++) {
-          const m = this.mol.o3[i];
-          const x = MX(m) + 17 + Math.sin(t * 8 + m.ph * 2) * ao, y = m.y + 9 + Math.cos(t * 10 + m.ph) * ao;
-          ctx.fillStyle = 'rgba(244,140,195,0.75)';
-          for (let j = 0; j < 3; j++) { const an = m.r * 2 + j * 2.094; ctx.beginPath(); ctx.arc(x + Math.cos(an) * 3.4, y + Math.sin(an) * 3.4, 2.4, 0, 6.2832); ctx.fill(); }
-        }
-      }
-      // 수증기 H₂O
-      const baseH = Math.round(this.mol.h2o.length * frac);
-      const nH = Math.round(baseH * Math.min(1, sH));
-      const drawH = (x, y, r) => {
-        ctx.fillStyle = 'rgba(103,232,249,0.85)';
-        ctx.beginPath(); ctx.arc(x, y, 3.6, 0, 6.2832); ctx.fill();
-        ctx.fillStyle = 'rgba(235,245,255,0.85)';
-        ctx.beginPath(); ctx.arc(x + Math.cos(r) * 5, y + Math.sin(r) * 5, 2, 0, 6.2832); ctx.fill();
-        ctx.beginPath(); ctx.arc(x + Math.cos(r + 1.82) * 5, y + Math.sin(r + 1.82) * 5, 2, 0, 6.2832); ctx.fill();
-      };
-      this.mol.h2o.forEach((m, i) => {
-        if (i >= nH) return;
-        drawH(MX(m) + Math.sin(t * 8 + m.ph) * ah, m.y + Math.cos(t * 9.5 + m.ph) * ah, m.r + Math.sin(t * 12 + m.ph) * 0.1 * ah);
-      });
-      if (sH > 1) {
-        const extra = Math.round(baseH * (sH - 1));
-        for (let i = 0; i < extra; i++) {
-          const m = this.mol.h2o[i];
-          drawH(MX(m) + 13 + Math.sin(t * 7 + m.ph * 2) * ah, m.y - 11 + Math.cos(t * 9 + m.ph) * ah, m.r * 1.7);
+      const sc = this.s.scene, v = this.sel();
+      const t = this.t;
+      for (const k of this.gasesIn(sc)) {
+        const on = v === 'all' || v === k;
+        const base = on ? 0.9 : 0.22;
+        const col = GAS[k].col;
+        for (const m of this.mol[k]) {
+          const amp = 0.6 + m.glow * 4;
+          const x = m.x + Math.sin(t * 9 + m.ph) * amp, y = m.y + Math.cos(t * 11 + m.ph) * amp;
+          if (m.glow > 0.05) {
+            const gr = ctx.createRadialGradient(x, y, 0, x, y, 18);
+            gr.addColorStop(0, `rgba(255,150,70,${0.6 * m.glow})`);
+            gr.addColorStop(1, 'rgba(255,150,70,0)');
+            ctx.fillStyle = gr;
+            ctx.beginPath(); ctx.arc(x, y, 18, 0, 6.2832); ctx.fill();
+          }
+          ctx.fillStyle = SR.css(col, base);
+          if (k === 'o3') {
+            for (let j = 0; j < 3; j++) { const a = m.r + j * 2.094; ctx.beginPath(); ctx.arc(x + Math.cos(a) * 3.4, y + Math.sin(a) * 3.4, 2.3, 0, 6.2832); ctx.fill(); }
+          } else if (k === 'h2o') {
+            ctx.beginPath(); ctx.arc(x, y, 3.4, 0, 6.2832); ctx.fill();
+            ctx.fillStyle = `rgba(235,245,255,${base})`;
+            ctx.beginPath(); ctx.arc(x + Math.cos(m.r) * 5, y + Math.sin(m.r) * 5, 1.9, 0, 6.2832); ctx.fill();
+            ctx.beginPath(); ctx.arc(x + Math.cos(m.r + 1.82) * 5, y + Math.sin(m.r + 1.82) * 5, 1.9, 0, 6.2832); ctx.fill();
+          } else if (k === 'ch4') {
+            ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 6.2832); ctx.fill();
+            for (let j = 0; j < 4; j++) { const a = m.r + j * 1.571; ctx.beginPath(); ctx.arc(x + Math.cos(a) * 5, y + Math.sin(a) * 5, 1.6, 0, 6.2832); ctx.fill(); }
+          } else {
+            // CO₂, N₂O: 일직선 분자
+            const dx = Math.cos(m.r) * 5, dy = Math.sin(m.r) * 5;
+            ctx.beginPath(); ctx.arc(x - dx, y - dy, 2.4, 0, 6.2832); ctx.arc(x + dx, y + dy, 2.4, 0, 6.2832); ctx.fill();
+            ctx.fillStyle = k === 'co2' ? `rgba(60,70,90,${base})` : SR.css(col, base);
+            ctx.beginPath(); ctx.arc(x, y, 2.6, 0, 6.2832); ctx.fill();
+          }
         }
       }
-      // 지표 입자
-      const warm = SR.clamp(this.rel('gnd') / 110, 0, 1);
-      ctx.fillStyle = `rgba(${Math.round(150 + 105 * warm)},${Math.round(120 + 20 * warm)},${Math.round(90 - 40 * warm)},0.7)`;
-      for (const m of this.mol.gnd) {
-        if (m.x > SCENE_W - 130) continue;
-        const x = m.x + Math.sin(t * 10 + m.ph) * ag * 0.6, y = m.y + Math.cos(t * 12 + m.ph) * ag * 0.6;
-        ctx.beginPath(); ctx.arc(x, y, 3, 0, 6.2832); ctx.fill();
+      // 분자 범례
+      let lx = 14;
+      for (const k of this.gasesIn(sc)) {
+        const on = v === 'all' || v === k;
+        SR.label(ctx, '● ' + GAS[k].short, lx, GND + 56, { size: 14, weight: 700, color: SR.css(GAS[k].col, on ? 1 : 0.4) });
+        lx += 84;
       }
     },
 
-    drawThermo(ctx, x, yc, key, label) {
-      const v = this.rel(key);
-      const h = 76, top = yc - h / 2;
-      const col = COL[key === 'gnd' ? 'gnd' : key];
-      ctx.fillStyle = 'rgba(4,10,24,0.7)';
-      if (this.lv === 'basic') SR.roundRect(ctx, x - 112, top - 26, 150, h + 46, 10);
-      else SR.roundRect(ctx, x - 64, top - 26, 128, h + 46, 10);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      SR.roundRect(ctx, x - 6, top, 12, h, 6); ctx.fill();
-      ctx.beginPath(); ctx.arc(x, top + h + 6, 10, 0, 6.2832); ctx.fill();
-      const f = SR.clamp(v / 120, 0, 1);
-      ctx.fillStyle = '#ff6b3d';
-      ctx.fillRect(x - 3.5, top + h - (h - 6) * f - 2, 7, (h - 6) * f + 6);
-      ctx.beginPath(); ctx.arc(x, top + h + 6, 7.5, 0, 6.2832); ctx.fill();
-      SR.label(ctx, label, this.lv === 'basic' ? x - 37 : x, top - 9, { size: 14, align: 'center', color: SR.css(col) });
-      if (this.lv === 'basic') {
-        SR.label(ctx, this.relWord(v), x - 16, top + h * 0.5, { size: 15, weight: 700, color: '#ffd2b8', align: 'right' });
-      } else {
-        SR.label(ctx, `${Math.round(v)}`, x + 14, top + h * 0.45, { size: 19, weight: 800, color: '#ffd2b8' });
-        SR.label(ctx, '상대값', x + 14, top + h * 0.45 + 18, { size: 12, color: '#ffd2b8' });
+    drawPhotons(ctx) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, SW, SR.H); ctx.clip();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const p of this.ph) SR.drawPhoton(ctx, p);
+      this.fx.draw(ctx);
+      ctx.globalCompositeOperation = 'source-over';
+      // 대표 광선 옆에 파장 표시 → 그래프의 같은 파장과 연결
+      for (const p of this.ph) {
+        if (p.re || p.state !== 0) continue;
+        SR.label(ctx, fmtL(p.l), p.x + 8, p.y - 6, { size: 12, weight: 700, color: SR.css(p.col), bg: 'rgba(4,10,24,0.6)' });
       }
+      ctx.restore();
     },
 
-    drawSpectrum(ctx) {
-      const y0 = SP.y0, y1 = SP.y1, H = y1 - y0;
-      const X = (l) => this.lx(l);
-      const Y = (v) => y1 - v * H * 0.92;
-      SR.label(ctx, '파장별 태양 복사 에너지 (단순화한 스펙트럼)', GX, 30, { size: 16, weight: 700 });
-      // 파장 영역 띠
-      const regions = [['uv', 200, 400, 'rgba(196,160,255,0.10)', '자외선'], ['vis', 400, 700, 'rgba(255,255,255,0.05)', '가시광선'], ['ir', 700, 2500, 'rgba(255,80,110,0.07)', '적외선']];
-      regions.forEach(([k, a, b, c, n]) => {
-        ctx.fillStyle = c;
-        ctx.fillRect(X(a), y0, X(b) - X(a), H);
-        SR.label(ctx, n, (X(a) + X(b)) / 2, y0 + 16, { size: 13, align: 'center', color: 'rgba(220,230,250,0.75)' });
-      });
-      // 가시광선 무지개 띠
-      for (let l = 400; l < 700; l += 5) {
-        ctx.fillStyle = SR.css(SR.waveColor(l), 0.9);
-        ctx.fillRect(X(l), y1 + 2, X(l + 5) - X(l) + 0.5, 5);
+    /* ---------------- 그리기: 그래프 ---------------- */
+    axis(range, x, w) {
+      const [a, b] = range;
+      return (l) => x + (Math.log(l / a) / Math.log(b / a)) * w;
+    },
+    drawSpectrumChart(c, box, kind, range, opt = {}) {
+      const { x, y, w, h } = box;
+      const X = this.axis(range, x, w);
+      const Y = (v) => y + h - v * h * 0.86;
+      const v = this.sel();
+      const N = 260;
+      const ls = [];
+      for (let i = 0; i <= N; i++) ls.push(range[0] * Math.pow(range[1] / range[0], i / N));
+      if (range[0] < 0.4) { c.fillStyle = 'rgba(196,160,255,0.08)'; c.fillRect(X(range[0]), y, X(0.4) - X(range[0]), h); }
+      if (opt.window || (v === 'win' && kind === 'earth')) {
+        c.fillStyle = 'rgba(74,222,128,0.14)'; c.fillRect(X(8), y, X(13) - X(8), h);
+        SR.label(c, '대기의 창', (X(8) + X(13)) / 2, y + 14, { size: 13, weight: 700, align: 'center', color: '#86efac' });
       }
-      const cv = this.curve;
-      const fillBetween = (fa, fb, col) => {
-        ctx.fillStyle = col;
-        ctx.beginPath();
-        cv.forEach((p, i) => (i ? ctx.lineTo(X(p.l), Y(fa(p))) : ctx.moveTo(X(p.l), Y(fa(p)))));
-        for (let i = cv.length - 1; i >= 0; i--) ctx.lineTo(X(cv[i].l), Y(fb(cv[i])));
-        ctx.closePath();
-        ctx.fill();
-      };
-      fillBetween((p) => p.sf, () => 0, 'rgba(214,161,90,0.35)');
-      fillBetween((p) => p.top, (p) => p.ao, SR.css(COL.o3, 0.8));
-      fillBetween((p) => p.ao, (p) => p.sf, SR.css(COL.h2o, 0.7));
-      ctx.lineWidth = 1.6;
-      ctx.setLineDash([5, 4]);
-      ctx.strokeStyle = 'rgba(255,230,160,0.95)';
-      ctx.beginPath();
-      cv.forEach((p, i) => (i ? ctx.lineTo(X(p.l), Y(p.top)) : ctx.moveTo(X(p.l), Y(p.top))));
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.strokeStyle = '#f2d39a';
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      cv.forEach((p, i) => (i ? ctx.lineTo(X(p.l), Y(p.sf)) : ctx.moveTo(X(p.l), Y(p.sf))));
-      ctx.stroke();
-      // 선택하지 않은 영역 흐리게
-      const b = BAND[this.s.band];
-      if (this.s.band !== 'all') {
-        ctx.fillStyle = 'rgba(7,16,37,0.72)';
-        if (b.lo > L0) ctx.fillRect(X(L0), y0, X(b.lo) - X(L0), H + 8);
-        if (b.hi < L1) ctx.fillRect(X(b.hi), y0, X(L1) - X(b.hi), H + 8);
+      if (v === 'vis' && kind === 'sun') { c.strokeStyle = 'rgba(255,255,255,0.6)'; c.setLineDash([4, 3]); c.strokeRect(X(0.4), y, X(0.7) - X(0.4), h); c.setLineDash([]); }
+      const curves = kind === 'both' ? ['sun', 'earth'] : [kind];
+      for (const kd of curves) {
+        for (let i = 0; i < N; i++) {
+          const l = ls[i], s = spec(l, kd);
+          if (s < 0.002) continue;
+          const vis = l >= 0.4 && l <= 0.7;
+          const col = kd === 'sun' ? (vis ? SR.waveColor(l * 1000) : l < 0.4 ? [160, 120, 230] : [230, 110, 120]) : [255, 140, 80];
+          c.fillStyle = SR.css(col, kd === 'sun' && vis ? 0.75 : 0.32);
+          c.fillRect(X(l), Y(s), X(ls[i + 1]) - X(l) + 0.6, Y(0) - Y(s));
+        }
+        // 흡수되는 부분(선택한 기체 또는 전체 대기)
+        if (!opt.noAbs && v && v !== 'vis') {
+          const one = GAS[v];
+          const Af = one ? one.A : Atot;
+          const ac = one ? one.col : [120, 170, 255];
+          c.fillStyle = SR.css(ac, 0.75);
+          c.beginPath();
+          ls.forEach((l, i) => { const s = spec(l, kd); if (i) c.lineTo(X(l), Y(s)); else c.moveTo(X(l), Y(s)); });
+          for (let i = N; i >= 0; i--) { const l = ls[i]; c.lineTo(X(l), Y(spec(l, kd) * (1 - Af(l)))); }
+          c.closePath();
+          c.fill();
+        }
+        c.strokeStyle = kd === 'sun' ? '#ffd166' : '#ff9a5a';
+        c.lineWidth = 2.2;
+        c.beginPath();
+        ls.forEach((l, i) => { if (i) c.lineTo(X(l), Y(spec(l, kd))); else c.moveTo(X(l), Y(spec(l, kd))); });
+        c.stroke();
+        if (opt.peaks) {
+          const T = kd === 'sun' ? T_SUN : T_EARTH, lp = peak(T);
+          c.setLineDash([3, 4]);
+          c.strokeStyle = 'rgba(255,255,255,0.6)';
+          c.beginPath(); c.moveTo(X(lp), Y(1)); c.lineTo(X(lp), Y(0)); c.stroke();
+          c.setLineDash([]);
+          SR.label(c, `최대 ≈ ${lp.toFixed(lp < 1 ? 2 : 1)} μm`, X(lp), Y(1) - 8, { size: 14, weight: 800, align: 'center', color: kd === 'sun' ? '#ffd166' : '#ff9a5a', bg: 'rgba(4,10,24,0.7)' });
+        }
       }
       // 축
-      ctx.strokeStyle = 'rgba(200,215,240,0.5)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(GX, y0); ctx.lineTo(GX, y1); ctx.lineTo(GX + GW, y1); ctx.stroke();
-      [0.2, 0.3, 0.4, 0.5, 0.7, 1, 1.5, 2, 2.5].forEach((u) => {
-        const x = X(u * 1000);
-        ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y1 + 10); ctx.stroke();
-        SR.label(ctx, String(u), x, y1 + 26, { size: 13, align: 'center', color: 'rgba(210,222,240,0.85)' });
+      c.strokeStyle = 'rgba(210,220,245,0.5)';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, y); c.lineTo(x, y + h); c.lineTo(x + w, y + h); c.stroke();
+      const ticks = [0.1, 0.2, 0.3, 0.5, 0.7, 1, 2, 3, 5, 10, 20, 30, 50, 100].filter((t) => t >= range[0] && t <= range[1]);
+      ticks.forEach((t) => {
+        c.beginPath(); c.moveTo(X(t), y + h); c.lineTo(X(t), y + h + 5); c.stroke();
+        SR.label(c, String(t), X(t), y + h + 19, { size: 12, align: 'center', color: 'rgba(210,222,240,0.85)' });
       });
-      SR.label(ctx, '파장(μm)', GX + GW, y1 + 44, { size: 13, align: 'right', color: 'rgba(210,222,240,0.85)' });
-      SR.label(ctx, '세기', GX - 8, y0 + 6, { size: 12, align: 'right', color: 'rgba(210,222,240,0.7)' });
-      // 범례
-      const lg = [['- - 대기 밖', 'rgba(255,230,160,0.95)'], ['오존 흡수', SR.css(COL.o3)], ['수증기 흡수', SR.css(COL.h2o)], ['지표 도달', '#e7c58c']];
-      const lx = GX + GW * 0.7;
-      lg.forEach(([n, c], i) => {
-        const yy = y0 + 40 + i * 20;
-        if (i) { ctx.fillStyle = c; ctx.fillRect(lx, yy - 9, 12, 10); }
-        SR.label(ctx, n, lx + (i ? 18 : 0), yy, { size: 13, color: c });
+      SR.label(c, '파장(μm)', x + w, y + h + 36, { size: 12, align: 'right', color: 'rgba(210,222,240,0.85)' });
+      SR.label(c, '세기', x - 4, y + 10, { size: 11, align: 'right', color: 'rgba(210,222,240,0.7)' });
+      [['자외선', 0.1, 0.4], ['가시광선', 0.4, 0.7], ['적외선', 0.7, range[1]]].forEach(([n, a, b]) => {
+        const a2 = Math.max(a, range[0]), b2 = Math.min(b, range[1]);
+        if (b2 <= a2 || X(b2) - X(a2) < 34) return;
+        SR.label(c, n, (X(a2) + X(b2)) / 2, y + h - 6, { size: 12, align: 'center', color: 'rgba(230,236,248,0.75)' });
       });
     },
 
-    drawTempGraph(ctx) {
-      const y0 = TG.y0, y1 = TG.y1, H = y1 - y0;
-      SR.label(ctx, '온도 상승 정도 (상대값 · 실제 °C 아님)', GX, y0 - 18, { size: 16, weight: 700 });
-      const R = 100 / this.Tref;
-      const hist = this.hist.map((h) => ({ t: h.t, gnd: h.gnd * R, h2o: h.h2o * R, o3: h.o3 * R }));
-      const cur = { gnd: this.rel('gnd'), h2o: this.rel('h2o'), o3: this.rel('o3') };
-      const tNow = this.time;
-      const win = 60;
-      const t0 = Math.max(0, tNow - win);
-      const maxT = Math.max(20, Math.ceil((Math.max(...hist.map((h) => Math.max(h.gnd, h.h2o, h.o3))) + 1) / 20) * 20);
-      const X = (t) => GX + ((t - t0) / win) * GW;
-      const Y = (v) => y1 - (v / maxT) * H;
-      ctx.strokeStyle = 'rgba(200,215,240,0.12)';
-      ctx.lineWidth = 1;
-      for (let v = 0; v <= maxT; v += maxT / 5) {
-        ctx.beginPath(); ctx.moveTo(GX, Y(v)); ctx.lineTo(GX + GW, Y(v)); ctx.stroke();
-        SR.label(ctx, `${Math.round(v)}`, GX - 6, Y(v) + 4, { size: 12, align: 'right', color: 'rgba(210,222,240,0.7)' });
-      }
-      ctx.strokeStyle = 'rgba(200,215,240,0.5)';
-      ctx.beginPath(); ctx.moveTo(GX, y0); ctx.lineTo(GX, y1); ctx.lineTo(GX + GW, y1); ctx.stroke();
-      for (let s = Math.ceil(t0 / 10) * 10; s <= t0 + win; s += 10) {
-        SR.label(ctx, `${s}`, X(s), y1 + 18, { size: 12, align: 'center', color: 'rgba(210,222,240,0.7)' });
-      }
-      SR.label(ctx, '모형 시간(초)', GX + GW, y1 + 36, { size: 13, align: 'right', color: 'rgba(210,222,240,0.85)' });
-      const lines = [['gnd', '지표'], ['h2o', '수증기층'], ['o3', '오존층']];
-      lines.forEach(([k, n]) => {
-        ctx.strokeStyle = SR.css(COL[k]);
-        ctx.lineWidth = 2.6;
-        ctx.beginPath();
-        let started = false;
-        for (const h of hist) {
-          if (h.t < t0) continue;
-          const x = X(h.t), y = Y(h[k]);
-          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
-        }
-        ctx.lineTo(X(tNow), Y(cur[k]));
-        ctx.stroke();
-        SR.label(ctx, `${n} ${Math.round(cur[k])}`, Math.min(X(tNow) + 6, GX + GW - 4), Y(cur[k]) - 6, { size: 13, align: X(tNow) > GX + GW - 120 ? 'right' : 'left', color: SR.css(COL[k]) });
+    // 기체별 흡수 정도 띠(정성적)
+    drawStrips(c, box, range, gases) {
+      const { x, y, w, h } = box;
+      const X = this.axis(range, x, w);
+      const v = this.sel();
+      const rowH = h / gases.length;
+      SR.label(c, '대기 성분별 흡수 정도 (정성적, 위로 갈수록 강하게 흡수)', x, y - 8, { size: 13, weight: 700, color: 'rgba(230,236,248,0.9)' });
+      gases.forEach((k, i) => {
+        const yy = y + i * rowH, hh = rowH - 6;
+        const isTot = k === 'tot';
+        const A = isTot ? Atot : GAS[k].A;
+        const col = isTot ? [147, 197, 253] : GAS[k].col;
+        const on = !v || v === 'all' || v === k || ((v === 'win' || v === 'vis') && isTot);
+        c.fillStyle = 'rgba(255,255,255,0.04)';
+        c.fillRect(x, yy, w, hh);
+        c.fillStyle = SR.css(col, on ? 0.75 : 0.25);
+        c.beginPath();
+        c.moveTo(x, yy + hh);
+        for (let j = 0; j <= 200; j++) { const l = range[0] * Math.pow(range[1] / range[0], j / 200); c.lineTo(X(l), yy + hh - A(l) * hh); }
+        c.lineTo(x + w, yy + hh);
+        c.closePath();
+        c.fill();
+        SR.label(c, isTot ? '전체 대기' : GAS[k].name, x - 6, yy + hh / 2 + 4, { size: 12, align: 'right', color: SR.css(col, on ? 1 : 0.5) });
+        if (v === k) { c.strokeStyle = SR.css(col, 0.9); c.lineWidth = 1.5; c.strokeRect(x, yy, w, hh); }
       });
+      if (v === 'win' || this.s.scene === 'compare') {
+        const a = Math.max(8, range[0]);
+        if (a < 13) { c.fillStyle = 'rgba(74,222,128,0.12)'; c.fillRect(X(a), y, X(13) - X(a), h - 6); }
+      }
+    },
+
+    drawBackground(c) {
+      const sc = this.s.scene;
+      c.fillStyle = '#071025';
+      c.fillRect(0, 0, SR.W, SR.H);
+      if (sc === 'compare') { this.chartBox = null; this.drawCompareStatic(c); return; }
+      this.drawScene(c);
+      c.fillStyle = 'rgba(150,180,230,0.15)';
+      c.fillRect(SW, 0, 1.5, SR.H);
+      const range = RANGE[sc];
+      SR.label(c, sc === 'sun' ? '태양 복사 스펙트럼과 흡수되는 부분' : '지구 복사 스펙트럼과 흡수되는 부분', CH.x - 10, 26, { size: 15, weight: 700 });
+      const chartH = this.lv === 'basic' ? 250 : 210;
+      this.chartBox = { x: CH.x + 28, y: 46, w: CH.w - 40, h: chartH };
+      this.drawSpectrumChart(c, this.chartBox, sc, range, { peaks: true });
+      const v = this.sel();
+      const ac = v === 'all' ? '흡수되는 부분(전체 대기)' : v === 'win' ? '흡수되는 부분(전체 대기) · 초록 = 대기의 창' : v === 'vis' ? '점선 상자 = 가시광선(흡수 거의 없음)' : `${GAS[v].name}가 흡수하는 부분`;
+      SR.label(c, `■ ${ac}`, CH.x + 28, this.chartBox.y + chartH + 54, { size: 13, color: GAS[v] ? SR.css(GAS[v].col) : '#93c5fd' });
+      if (this.lv === 'basic') {
+        const ks = GAS[v] ? [v] : ['tot'];
+        this.drawStrips(c, { x: CH.x + 92, y: 382, w: CH.w - 104, h: 46 }, range, ks);
+        SR.label(c, sc === 'sun' ? '태양 복사 ↓ 위에서 아래로 들어옴' : '지구 복사 ↑ 지표에서 위로 나감', CH.x + 28, 478, { size: 16, weight: 800, color: sc === 'sun' ? '#ffd166' : '#ff9a5a' });
+        SR.label(c, sc === 'sun' ? `표면 온도 약 ${T_SUN} K · 최대 약 ${peak(T_SUN).toFixed(1)} μm · 단파 복사` : `표면 온도 약 ${T_EARTH} K · 최대 약 ${peak(T_EARTH).toFixed(0)} μm · 장파 복사`, CH.x + 28, 504, { size: 14, color: 'rgba(230,236,248,0.85)' });
+        SR.label(c, '곡선은 최댓값을 1로 맞춘 모양(실제 세기 아님)', CH.x + 28, 530, { size: 12, color: 'rgba(210,222,240,0.65)' });
+      } else {
+        const ks = sc === 'sun' ? ['o3', 'h2o', 'co2', 'tot'] : ['h2o', 'co2', 'ch4', 'n2o', 'o3', 'tot'];
+        this.drawStrips(c, { x: CH.x + 72, y: 362, w: CH.w - 84, h: sc === 'sun' ? 190 : 270 }, range, ks);
+        SR.label(c, '곡선은 최댓값을 1로 맞춘 모양(실제 세기 아님)', CH.x - 6, SR.H - 10, { size: 12, color: 'rgba(210,222,240,0.65)' });
+      }
+    },
+
+    drawCompareStatic(c) {
+      SR.label(c, '태양 복사 에너지와 지구 복사 에너지의 파장 분포', 30, 34, { size: 18, weight: 800 });
+      const box = { x: 70, y: 70, w: 700, h: 300 };
+      this.drawSpectrumChart(c, box, 'both', RANGE.compare, { peaks: true, noAbs: true, window: this.lv !== 'basic' });
+      SR.label(c, '태양 복사', box.x + 14, box.y + 150, { size: 15, weight: 700, color: '#ffd166' });
+      SR.label(c, '(약 5800 K)', box.x + 14, box.y + 170, { size: 13, color: '#ffd166' });
+      SR.label(c, '지구 복사', box.x + box.w - 12, box.y + 150, { size: 15, weight: 700, color: '#ff9a5a', align: 'right' });
+      SR.label(c, '(약 288 K)', box.x + box.w - 12, box.y + 170, { size: 13, color: '#ff9a5a', align: 'right' });
+      SR.label(c, '※ 두 곡선은 각각 최댓값을 1로 정규화한 것으로, 실제 에너지의 세기를 비교하는 그래프가 아닙니다.', 30, 432, { size: 13, color: 'rgba(225,232,245,0.85)' });
+      SR.label(c, '(실제로는 표면 온도가 높은 태양이 단위 면적당 훨씬 많은 에너지를 방출)', 30, 452, { size: 13, color: 'rgba(225,232,245,0.7)' });
+      const tx = 820, ty = 70, cw = [120, 120, 120], rh = 44;
+      const rows = [['', '태양 복사', '지구 복사'], ['표면 온도', `약 ${T_SUN} K`, `약 ${T_EARTH} K`], ['최대 에너지 파장', `약 ${peak(T_SUN).toFixed(1)} μm`, `약 ${peak(T_EARTH).toFixed(0)} μm`], ['', '(가시광선)', '(적외선)'], ['종류', '단파 복사', '장파 복사']];
+      c.fillStyle = 'rgba(13,26,53,0.9)';
+      SR.roundRect(c, tx - 10, ty - 10, cw[0] + cw[1] + cw[2] + 20, rh * rows.length + 10, 12); c.fill();
+      rows.forEach((r, i) => {
+        r.forEach((t, j) => {
+          const x = tx + cw.slice(0, j).reduce((a, b) => a + b, 0) + (j ? cw[j] / 2 : 0);
+          SR.label(c, t, x, ty + i * rh + 24, { size: i === 0 || j === 0 ? 14 : 16, weight: i === 0 || j === 0 ? 700 : 800, align: j ? 'center' : 'left', color: i === 0 ? 'rgba(230,236,248,0.8)' : j === 1 ? '#ffd166' : j === 2 ? '#ff9a5a' : 'rgba(230,236,248,0.9)' });
+        });
+      });
+      SR.label(c, '빈의 변위 법칙: λmax ≈ 2898 μm·K ÷ T', tx, ty + rh * rows.length + 34, { size: 15, weight: 700, color: '#e6edf8' });
+      SR.label(c, `태양: 2898 ÷ ${T_SUN} ≈ ${peak(T_SUN).toFixed(2)} μm`, tx, ty + rh * rows.length + 60, { size: 14, color: '#ffd166' });
+      SR.label(c, `지구: 2898 ÷ ${T_EARTH} ≈ ${peak(T_EARTH).toFixed(1)} μm`, tx, ty + rh * rows.length + 84, { size: 14, color: '#ff9a5a' });
+      if (this.lv !== 'basic') this.drawStrips(c, { x: 160, y: 495, w: 610, h: 160 }, RANGE.compare, ['o3', 'h2o', 'co2', 'tot']);
+    },
+
+    // 스펙트럼 비교(기본 모드): 파장이 짧은 복사와 긴 복사를 물결로 표현한 개념도
+    drawCompareWaves(ctx) {
+      if (this.lv !== 'basic') return;
+      const t = this.t;
+      const wave = (x0, y0, len, lam, amp, col, label) => {
+        ctx.strokeStyle = col; ctx.lineWidth = 3;
+        ctx.beginPath();
+        for (let i = 0; i <= len; i += 2) { const y = y0 + Math.sin(((i - t * 120) / lam) * 6.283) * amp; if (i) ctx.lineTo(x0 + i, y); else ctx.moveTo(x0, y); }
+        ctx.stroke();
+        SR.arrowHead(ctx, x0 + len + 12, y0, 0, 12, col);
+        SR.label(ctx, label, x0, y0 - 22, { size: 15, weight: 700, color: col });
+      };
+      SR.drawSun(ctx, 70, 530, 22);
+      wave(110, 530, 320, 14, 10, '#ffd166', '태양: 파장이 짧은 단파 복사');
+      ctx.fillStyle = '#3b6a3e'; ctx.beginPath(); ctx.arc(70, 628, 22, 0, 6.2832); ctx.fill();
+      wave(110, 628, 320, 64, 10, '#ff9a5a', '지구: 파장이 긴 장파 복사');
+      SR.label(ctx, '(물결의 파장 길이는 개념을 보여 주기 위한 그림)', 470, 666, { size: 12, color: 'rgba(210,222,240,0.6)' });
     },
 
     draw(ctx) {
-      const key = this.s.h2o + '|' + this.s.o3 + '|' + SCENE_W;
+      const key = this.s.scene + '|' + this.sel() + '|' + this.lv;
       if (this.bgKey !== key || !this.bg || this.bg.ps !== this.app.ps) {
         this.bg = SR.makeLayer(this.bg, this.app.ps, (c) => this.drawBackground(c));
         this.bgKey = key;
       }
       ctx.drawImage(this.bg, 0, 0, SR.W, SR.H);
-      ctx.save();
-      ctx.beginPath(); ctx.rect(0, 0, SCENE_W, SR.H); ctx.clip();
-      // 데워진 정도 표시
-      const glow = (y0, y1, T, pulse) => {
-        const a = SR.clamp(T / this.Tref, 0, 1.2) * 0.3 + pulse * 0.12;
-        if (a <= 0.01) return;
-        const g = ctx.createLinearGradient(0, y0, 0, y1);
-        g.addColorStop(0, 'rgba(255,120,50,0)');
-        g.addColorStop(0.5, `rgba(255,120,50,${a})`);
-        g.addColorStop(1, 'rgba(255,120,50,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, y0, SCENE_W, y1 - y0);
-      };
-      glow(OZ.y0, OZ.y1, this.T.o3, this.pulse.o3);
-      glow(WV.y0 + 80, WV.y1 + 10, this.T.h2o, this.pulse.h2o);
-      glow(GND - 10, SR.H, this.T.gnd, this.pulse.gnd);
-      this.drawMolecules(ctx);
-      SR.drawSun(ctx, 54, 34, 24);
-      ctx.globalCompositeOperation = 'lighter';
-      for (const p of this.ph) SR.drawPhoton(ctx, p);
-      this.fx.draw(ctx);
-      ctx.globalCompositeOperation = 'source-over';
-      SR.label(ctx, '오존층 (성층권)', 14, OZ.y0 - 6, { size: 16, color: SR.css(COL.o3) });
-      SR.label(ctx, '수증기 (대류권, 지표 가까이에 많음)', 14, WV.y0 + 4, { size: 16, color: SR.css(COL.h2o) });
-      SR.label(ctx, '지표', 14, GND + 22, { size: 16, color: '#f0d7ad' });
-      // 범례: 빛 종류
-      SR.label(ctx, '··· 자외선', 96, 30, { size: 14, color: '#c9a8ff' });
-      SR.label(ctx, '── 가시광선', 190, 30, { size: 14, color: '#bfe6ff' });
-      SR.label(ctx, '- - 적외선', 300, 30, { size: 14, color: '#ff7a98' });
-      SR.label(ctx, '(자외선·적외선은 눈에 보이지 않지만 색으로 구분해 표시)', 96, 52, { size: 12, color: 'rgba(210,222,240,0.7)' });
-      ctx.restore();
-      const tx = SCENE_W - 72;
-      this.drawThermo(ctx, tx, (OZ.y0 + OZ.y1) / 2 + 2, 'o3', '오존층');
-      this.drawThermo(ctx, tx, 420, 'h2o', '수증기층');
-      this.drawThermo(ctx, tx, 600, 'gnd', '지표');
-      if (this.lv !== 'basic') {
-        this.drawSpectrum(ctx);
-        this.drawTempGraph(ctx);
+      const sc = this.s.scene;
+      if (sc === 'compare') { this.drawCompareWaves(ctx); return; }
+      if (sc === 'earth') {
+        // 지표 온기: 재방출 복사가 돌아올수록 진해짐(수치 없이 정성적으로)
+        const a = 0.12 + Math.min(1, this.back) * 0.3;
+        const hg = ctx.createLinearGradient(0, GND, 0, GND + 90);
+        hg.addColorStop(0, `rgba(255,120,50,${a})`);
+        hg.addColorStop(1, 'rgba(255,100,40,0)');
+        ctx.fillStyle = hg;
+        ctx.fillRect(0, GND, SW, 90);
+        SR.label(ctx, '지표가 적외선(장파 복사)을 방출 ↑', 14, GND + 86, { size: 14, color: '#ffc49a' });
+        if (this.back > 0.3) SR.label(ctx, '대기가 다시 내보낸 복사 일부가 지표로 → 온실 효과', SW - 14, GND - 14, { size: 15, weight: 700, align: 'right', color: '#ffb27a', bg: 'rgba(4,10,24,0.7)' });
+        if (this.sel() === 'win') SR.label(ctx, '대기의 창(8~13 μm) → 우주로', SW / 2, 30, { size: 16, weight: 800, align: 'center', color: '#86efac', bg: 'rgba(4,10,24,0.7)' });
+      } else {
+        SR.drawSun(ctx, 40, 30, 24);
+        SR.label(ctx, '태양 복사(단파) ↓', 78, 36, { size: 15, weight: 700, color: '#ffd166' });
       }
-      SR.label(ctx, '층의 높이·두께는 실제 비율이 아닙니다', SCENE_W - 8, SR.H - 8, { size: 12, align: 'right', color: 'rgba(230,220,200,0.7)' });
+      this.drawMolecules(ctx);
+      this.drawPhotons(ctx);
+      // 그래프 위에 장면 속 광선의 파장 표시 → 흡수되면 기체 색으로
+      const b = this.chartBox;
+      if (b) {
+        const X = this.axis(RANGE[sc], b.x, b.w);
+        for (const p of this.ph) {
+          if (p.re || p.l < RANGE[sc][0] || p.l > RANGE[sc][1]) continue;
+          const x = X(p.l);
+          const col = p.state === 1 && p.gas ? GAS[p.gas].col : p.col;
+          ctx.strokeStyle = SR.css(col, 0.9);
+          ctx.lineWidth = 2;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(x, b.y); ctx.lineTo(x, b.y + b.h); ctx.stroke();
+          ctx.setLineDash([]);
+          SR.arrowHead(ctx, x, b.y + b.h + 2, -Math.PI / 2, 9, SR.css(col));
+          if (p.state === 1) { ctx.strokeStyle = SR.css(col); ctx.beginPath(); ctx.arc(x, b.y + b.h - 10, 7, 0, 6.2832); ctx.stroke(); }
+        }
+        SR.label(ctx, '┆ 장면 속 광선의 파장', b.x + b.w, b.y + 10, { size: 12, align: 'right', color: 'rgba(230,236,248,0.7)' });
+      }
     },
   };
 

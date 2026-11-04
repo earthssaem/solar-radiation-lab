@@ -247,6 +247,16 @@ input[type="range"]:focus-visible { outline: 2px solid var(--acc); outline-offse
 .btn-acc:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: 0.4; cursor: default; }
 
+/* 반사: 대표 반사율 표시 */
+.ro-refl { margin: 10px 2px 4px; }
+.ro-refl-main { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; color: var(--muted); }
+.ro-refl-main b { font-size: 24px; color: var(--acc); font-variant-numeric: tabular-nums; }
+.ro-refl-range { font-size: 13px; color: var(--dim); margin-top: 1px; }
+.ro-refl-bar { position: relative; height: 10px; border-radius: 5px; background: rgba(255,255,255,0.08); margin-top: 6px; }
+.ro-refl-bar i { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: rgba(94,234,212,0.35); }
+.ro-refl-bar em { position: absolute; top: -3px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px; background: var(--acc); }
+.ro-refl-note { font-size: 12.5px; color: #fbbf87; margin-top: 6px; }
+
 /* 측정값 */
 .ro-big { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 0 10px; margin: 4px 0 12px; }
 .ro-k { font-size: 14px; color: var(--muted); }
@@ -349,6 +359,14 @@ input[type="range"]:focus-visible { outline: 2px solid var(--acc); outline-offse
 .quiz-opt.right .mk { border-color: #4ade80; background: #4ade80; color: #06101f; }
 .quiz-opt.wrong { border-color: #f87171; background: rgba(248, 113, 113, 0.08); }
 .quiz-opt.wrong .mk { border-color: #f87171; background: #f87171; color: #06101f; }
+.quiz-nav { display: flex; gap: 6px; margin: 6px 0 2px; }
+.quiz-num {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line2); background: transparent;
+  color: var(--muted); font-weight: 800; font-size: 14px; cursor: pointer;
+}
+.quiz-num.done { border-color: #4ade80; color: #4ade80; }
+.quiz-num.on { background: var(--acc); border-color: var(--acc); color: #06101f; }
+.quiz-warn { color: #fbbf87; }
 .quiz-row { display: flex; gap: 8px; align-items: center; margin-top: 9px; flex-wrap: wrap; }
 .quiz-hint { font-size: 13px; color: var(--dim); flex: 1; min-width: 160px; }
 .quiz-fb { margin-top: 9px; font-size: 15px; line-height: 1.55; padding: 9px 12px; border-radius: 10px; background: rgba(0, 0, 0, 0.25); }

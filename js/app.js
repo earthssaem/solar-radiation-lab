@@ -79,7 +79,7 @@
     if (!m._inited) {
       m.init(app);
       m._inited = true;
-      m._quiz = { sel: null, checked: false };
+      m._quiz = { sel: null, checked: false, qi: 0, list: Array.isArray(m.quiz) ? m.quiz.map(() => ({ sel: null, checked: false })) : null };
     }
     if (app.mode && app.mode.exit) app.mode.exit();
     app.mode = m;
@@ -161,12 +161,25 @@
   /* ---------------- 탐구 질문 ---------------- */
   function renderQuiz() {
     const m = app.mode;
-    const q = m.quiz;
     const box = quizEl;
-    if (!q) { box.innerHTML = ''; return; }
-    const st = m._quiz;
+    if (!m.quiz) { box.innerHTML = ''; return; }
+    // 탐구 질문이 여러 개인 모드: 문제 번호로 넘겨 보기(문제마다 답 상태 따로 유지)
+    const multi = Array.isArray(m.quiz);
+    const q = multi ? m.quiz[m._quiz.qi] : m.quiz;
+    const st = multi ? m._quiz.list[m._quiz.qi] : m._quiz;
     box.innerHTML = '';
     box.appendChild(SR.el('div', 'quiz-tag', '탐구 질문 · 먼저 조작해 보고 답을 고르세요'));
+    if (multi) {
+      const nav = SR.el('div', 'quiz-nav');
+      m.quiz.forEach((_, i) => {
+        const b = SR.el('button', 'quiz-num' + (i === m._quiz.qi ? ' on' : '') + (m._quiz.list[i].checked ? ' done' : ''), String(i + 1));
+        b.type = 'button';
+        b.setAttribute('aria-label', `문제 ${i + 1}`);
+        b.addEventListener('click', () => { m._quiz.qi = i; renderQuiz(); });
+        nav.appendChild(b);
+      });
+      box.appendChild(nav);
+    }
     box.appendChild(SR.el('p', 'quiz-q', q.q));
     const opts = SR.el('div', 'quiz-opts' + (q.options.every((t) => t.length <= 10) ? ' short' : ''));
     const letters = ['가', '나', '다', '라'];
@@ -180,6 +193,7 @@
       }
       b.addEventListener('click', () => {
         st.sel = i;
+        st.needPick = false;
         st.checked = false;
         renderQuiz();
       });
@@ -188,6 +202,9 @@
     box.appendChild(opts);
     const row = SR.el('div', 'quiz-row');
     row.appendChild(SR.ui.button('정답 확인', () => {
+      // 답을 고르기 전에는 정답을 보여 주지 않음
+      if (st.sel == null) { st.needPick = true; renderQuiz(); return; }
+      st.needPick = false;
       st.checked = true;
       renderQuiz();
     }, 'btn-acc'));
@@ -196,7 +213,8 @@
         q.action.run();
       }));
     }
-    if (!st.checked && q.hint) row.appendChild(SR.el('span', 'quiz-hint', q.hint));
+    if (!st.checked && st.needPick) row.appendChild(SR.el('span', 'quiz-hint quiz-warn', '먼저 시뮬레이션을 관찰하고 답을 하나 골라 주세요.'));
+    else if (!st.checked && q.hint) row.appendChild(SR.el('span', 'quiz-hint', q.hint));
     if (st.checked) row.appendChild(SR.ui.button('다시 풀기', () => {
       st.sel = null;
       st.checked = false;
@@ -205,9 +223,7 @@
     box.appendChild(row);
     if (st.checked) {
       const ok = st.sel === q.answer;
-      const head = st.sel == null
-        ? '<b class="ok">정답: ' + letters[q.answer] + '</b> — '
-        : ok ? '<b class="ok">정답입니다!</b> ' : '<b class="no">다시 생각해 봐요.</b> 정답은 ' + letters[q.answer] + '입니다. ';
+      const head = ok ? '<b class="ok">정답입니다!</b> ' : '<b class="no">다시 생각해 봐요.</b> 정답은 ' + letters[q.answer] + '입니다. ';
       const ex = typeof q.explain === 'function' ? q.explain() : q.explain;
       box.appendChild(SR.el('div', 'quiz-fb', head + ex));
     }

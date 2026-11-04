@@ -50,7 +50,7 @@
 
     quiz: {
       q: '같은 양의 태양 복사 에너지가 들어올 때, 눈과 풀 중 어느 쪽이 더 많은 에너지를 반사할까?',
-      hint: '‘두 대상 비교’에서 눈과 풀을 선택하고 반사율을 바꿔 보세요.',
+      hint: '대상 A·B에 눈과 풀을 골라 반사되는 양을 비교해 보세요.',
       options: ['눈', '풀', '둘 다 같다'],
       answer: 0,
       action: { label: '눈 vs 풀 비교하기', run: () => M.preset('snow', 'grass') },
@@ -58,7 +58,7 @@
         const sa = M.s.a === 'snow' ? M.s.ra : M.s.b === 'snow' ? M.s.rb : 80;
         const ga = M.s.a === 'grass' ? M.s.ra : M.s.b === 'grass' ? M.s.rb : 15;
         return `학습지의 반사율은 눈 50~90%, 풀 5~25%로 범위가 겹치지 않습니다. 따라서 같은 에너지 100이 들어오면 눈은 50~90, 풀은 5~25만 반사하므로 항상 눈이 더 많이 반사합니다. ` +
-          `(지금 설정: 눈 ${sa}% → 반사 ${sa}, 흡수 ${100 - sa} / 풀 ${ga}% → 반사 ${ga}, 흡수 ${100 - ga}) 반대로 흡수하는 에너지는 풀이 더 많아 풀밭이 눈밭보다 더 잘 데워집니다.`;
+          `(대표값: 눈 ${sa}% → 반사 ${sa}, 흡수 ${100 - sa} / 풀 ${ga}% → 반사 ${ga}, 흡수 ${100 - ga}) 반대로 흡수하는 에너지는 풀이 더 많아 풀밭이 눈밭보다 더 잘 데워집니다.`;
       },
     },
 
@@ -172,36 +172,19 @@
         });
         // 기본 모드에서는 구름 버튼을 숨김(지표 비교에 집중)
         seg.el.querySelectorAll('.seg-btn').forEach((b) => { if (SURF[b.dataset.v].cloud) b.classList.add('adv-only'); });
-        const key = which === 'a' ? 'ra' : 'rb';
-        const sl = ui.slider({
-          label: '반사율', min: SURF[this.s[which]].min, max: SURF[this.s[which]].max, value: this.s[key], unit: '%',
-          ends: [`${SURF[this.s[which]].min}%`, `${SURF[this.s[which]].max}%`],
-          hint: '학습지에 제시된 범위 안에서만 조절됩니다.',
-          onInput: (v, base) => {
-            this.s[key] = v;
-            this.resetCounts(which === 'a' ? 0 : 1);
-            if (base != null && base !== v) {
-              const nm = SURF[this.s[which]].name;
-              if (SURF[this.s[which]].cloud) {
-                const f0 = split(this.s[which], base), f1 = split(this.s[which], v);
-                this.change = `${nm}의 반사율을 ${base}% → ${v}%로 ${v > base ? '높이자' : '낮추자'} 반사 ${f0.r} → ${f1.r}, 흡수 ${f0.a} → ${f1.a}, 투과 ${f0.t} → ${SR.j(f1.t, '로')} 바뀌었습니다.`;
-              } else {
-                this.change = `${nm}의 반사율을 ${base}% → ${v}%로 ${v > base ? '높이자' : '낮추자'} 반사 에너지는 ${base} → ${v}, 흡수 에너지는 ${100 - base} → ${SR.j(100 - v, '로')} 바뀌었습니다.`;
-              }
-            }
-            this.onChange();
-          },
-        });
-        const hn = sl.el.querySelector('.ctl-hint');
-        if (hn) hn.classList.add('adv-only');
-        sec.append(seg.el, sl.el);
+        // 반사율은 직접 바꾸지 않음: 대상을 고르면 대표 반사율이 자동 적용
+        const ro = SR.el('div', 'ro-refl');
+        sec.append(seg.el, ro);
+        this.ctl['ro_' + which] = ro;
         this.ctl[which] = seg;
-        this.ctl[key] = sl;
+        this.paintRefl(which);
         return sec;
       };
       this.secA = mk('a', '대상 A (왼쪽)');
       this.secB = mk('b', '대상 B (오른쪽)');
 
+      const sNote = ui.section('반사율은 고정값이 아니에요');
+      sNote.appendChild(SR.el('p', 'ctl-hint', '같은 대상이라도 상태(신선한 눈/오래된 눈, 구름의 두께, 흙이 젖은 정도)와 태양 고도 같은 관측 조건에 따라 반사율이 학습지 범위 안에서 달라집니다. 여기서는 대표값으로 비교합니다.'));
       const s3 = ui.section('학습지 반사율 표', '구름의 흡수율은 학습지에 없어 대표값(두꺼운 구름 약 10%, 얇은 구름 약 3%)을 썼습니다. 나머지는 구름을 통과합니다.');
       s3.classList.add('adv-only');
       const tb = SR.el('table', 'ro-table');
@@ -211,27 +194,39 @@
       s3.appendChild(tb);
       const foot = SR.el('div', 'pnl-foot adv-only');
       foot.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
-      p.append(s0, this.secA, this.secB, s3, foot);
+      p.append(s0, this.secA, this.secB, sNote, s3, foot);
       this.panel = p;
       this.updateTable();
     },
 
     setType(which, v, silent) {
       const prev = this.s[which];
+      const key = which === 'a' ? 'ra' : 'rb';
+      const r0 = this.s[key];
       this.s[which] = v;
       this.ctl[which].set(v, true);
-      const key = which === 'a' ? 'ra' : 'rb';
       const sf = SURF[v];
-      const sl = this.ctl[key];
-      this.s[key] = sf.def;
-      sl.setRange(sf.min, sf.max, sf.def);
-      sl.el.querySelector('.ctl-ends').innerHTML = `<span>${sf.min}%</span><span>${sf.max}%</span>`;
+      this.s[key] = sf.def; // 대표 반사율
+      this.paintRefl(which);
       this.resetCounts(which === 'a' ? 0 : 1);
       this.bgKey = null;
       if (!silent) {
-        this.change = prev !== v ? `${which === 'a' ? '왼쪽' : '오른쪽'} 대상을 ${SURF[prev].name} → ${SR.j(sf.name, '로')} 바꾸었습니다. 반사율 범위는 ${sf.min}~${sf.max}%이며, 대표값 ${sf.def}%로 설정했습니다.` : '';
+        if (prev !== v) {
+          const f = split(v, sf.def);
+          this.change = `${which === 'a' ? '왼쪽' : '오른쪽'} 대상을 ${SURF[prev].name} → ${SR.j(sf.name, '로')} 바꾸자 대표 반사율이 ${r0 === sf.def ? `${sf.def}%(학습지 범위 ${sf.min}~${sf.max}%)이고` : `${r0}% → ${sf.def}%(학습지 범위 ${sf.min}~${sf.max}%)로 바뀌어`}, 입사 100 중 반사 ${f.r}, 흡수 ${f.a}` + (sf.cloud ? `, 투과 ${f.t}가 되었습니다.` : `가 되었습니다.`);
+        } else this.change = '';
         this.onChange();
       }
+    },
+
+    paintRefl(which) {
+      const ro = this.ctl && this.ctl['ro_' + which];
+      if (!ro) return;
+      const sf = SURF[this.s[which]];
+      ro.innerHTML = `<div class="ro-refl-main"><span>대표 반사율</span><b>${sf.def}%</b></div>` +
+        `<div class="ro-refl-range">학습지 범위 ${sf.min}~${sf.max}%</div>` +
+        `<div class="ro-refl-bar"><i style="left:${sf.min}%;width:${sf.max - sf.min}%"></i><em style="left:${sf.def}%"></em></div>` +
+        (sf.cloud ? `<div class="ro-refl-note">흡수 ${sf.abs}%·투과 ${100 - sf.def - sf.abs}%는 이 모형의 가정값</div>` : '');
     },
 
     updateTable() {
@@ -570,7 +565,7 @@
       const L = P.big ? 250 : 170;
       const rx = T.x + Math.cos(ang) * L, ry = ty - Math.sin(ang) * L;
       band(T.x + Math.cos(ang) * 8, ty - 8, rx, ry, f.r * k, C_REF, 0.3);
-      tag(`반사 ${f.r}`, (T.x + rx) / 2 + 40 + (f.r * k) / 2, (ty + ry) / 2 + 10, C_REF);
+      tag(`반사 ${f.r}`, T.x + (rx - T.x) * 0.4 - 46 - (f.r * k) / 4, ty + (ry - ty) * 0.4, C_REF);
       if (P.cloud) {
         if (f.a > 0) {
           ctx.fillStyle = `rgba(255,130,60,${0.25 + f.a / 60})`;
@@ -597,7 +592,7 @@
       const cols = P.cloud ? [C_IN, C_REF, [255, 138, 61], [190, 200, 220]] : [C_IN, C_REF, [255, 138, 61]];
       const names = P.cloud ? ['입사', '반사', '흡수', '투과'] : ['입사', '반사', '흡수'];
       ctx.fillStyle = 'rgba(4,10,24,0.55)';
-      SR.roundRect(ctx, x0 - 14, y0 - hmax - 44, bw * nb + gap * (nb - 1) + 28, hmax + (this.lv === 'basic' ? 60 : 84), 12);
+      SR.roundRect(ctx, x0 - 14, y0 - hmax - 44, bw * nb + gap * (nb - 1) + 28, hmax + (this.lv === 'basic' ? 60 : 84) + (P.cloud ? 18 : 0), 12);
       ctx.fill();
       for (let i = 0; i < nb; i++) {
         const x = x0 + i * (bw + gap);
@@ -609,10 +604,11 @@
         SR.label(ctx, String(vals[i]), x + bw / 2, y0 - h - 8, { size: big ? 22 : 19, align: 'center', weight: 800, color: SR.css(cols[i]) });
         SR.label(ctx, names[i], x + bw / 2, y0 + 22, { size: big ? 17 : 15, align: 'center', color: '#dfe8f7' });
       }
+      if (P.cloud) SR.label(ctx, '흡수·투과는 모형 가정값', x0 + (bw * nb + gap * (nb - 1)) / 2, y0 + 42, { size: 12, align: 'center', color: '#fbbf87' });
       if (this.lv === 'basic') return;
       // 애니메이션 누적 개수 (100개 묶음)
       const t = `빛 묶음 ${pane.n}/100 · 반사 ${pane.r} · 흡수 ${pane.a}` + (P.cloud ? ` · 투과 ${pane.t}` : '');
-      SR.label(ctx, t, x0 + (bw * nb + gap * (nb - 1)) / 2, y0 + 48 + (big ? 2 : 0), { size: big ? 15 : nb === 4 ? 12 : 13, align: 'center', color: pane.hold > 0 ? '#ffffff' : 'rgba(210,222,240,0.85)' });
+      SR.label(ctx, t, x0 + (bw * nb + gap * (nb - 1)) / 2, y0 + 48 + (big ? 2 : 0) + (P.cloud ? 18 : 0), { size: big ? 15 : nb === 4 ? 12 : 13, align: 'center', color: pane.hold > 0 ? '#ffffff' : 'rgba(210,222,240,0.85)' });
     },
 
     draw(ctx) {
@@ -650,7 +646,7 @@
         const nm = (this.cmp() ? (i === 0 ? 'A  ' : 'B  ') : '') + SURF[P.type].name;
         const ly = P.cloud ? 560 : P.tgt.y + 48;
         SR.label(ctx, nm, P.R.x + 22, ly, { size: P.big ? 26 : 22, weight: 800, color: '#ffffff', bg: 'rgba(4,10,24,0.55)' });
-        SR.label(ctx, `반사율 ${P.r}%`, P.R.x + 22, ly + 30, { size: P.big ? 18 : 16, color: SR.ACCENT.reflect, bg: 'rgba(4,10,24,0.55)' });
+        SR.label(ctx, `대표 반사율 ${P.r}% (범위 ${SURF[P.type].min}~${SURF[P.type].max}%)`, P.R.x + 22, ly + 30, { size: P.big ? 18 : 16, color: SR.ACCENT.reflect, bg: 'rgba(4,10,24,0.55)' });
         ctx.restore();
       }
       if (this.lv === 'basic' && np === 2) {
