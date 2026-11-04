@@ -435,6 +435,56 @@
       if (tC0 > tIn) return null; // 대기 안에서 화면에 처음 나타나는 광선은 쓰지 않음
       return Object.assign({ k, kind, P0, back, tStart: tC0 - 12, tIn, tOut, tEnd, L: tOut - tIn, t: 0 }, opt);
     },
+    // 태양: 모든 대표 광선이 태양 표면에서 출발하도록, 광선 다발의 폭을 덮는 원반을 화면 모서리에 둠.
+    // (태양은 아주 멀리 있어 빛은 평행하게 오므로 광선은 퍼지지 않고 같은 방향으로 나아감)
+    placeSun(rays) {
+      if (!rays.length) return;
+      const d = this.d, n = this.n;
+      let kmin = Infinity, kmax = -Infinity;
+      rays.forEach((r) => { kmin = Math.min(kmin, r.k); kmax = Math.max(kmax, r.k); });
+      const kc = (kmin + kmax) / 2;
+      const Rs = Math.max(46, (kmax - kmin) / 2 + 30);
+      // 중심선이 화면에 들어오는 지점
+      const Qc = { x: E.x + n[0] * kc, y: E.y + n[1] * kc };
+      const back = 2400;
+      const P0 = { x: Qc.x - d[0] * back, y: Qc.y - d[1] * back };
+      const slab = (p, v, lo, hi) => (Math.abs(v) < 1e-9 ? [-1e9, 1e9] : [Math.min((lo - p) / v, (hi - p) / v), Math.max((lo - p) / v, (hi - p) / v)]);
+      const sx = slab(P0.x, d[0], 0, SR.W), sy = slab(P0.y, d[1], 0, SR.H);
+      const tEnter = Math.max(sx[0], sy[0]);
+      let tc = tEnter + 120 - Rs; // 원반의 앞쪽 가장자리가 화면 안 120px
+      const startOf = (r, tcc) => {
+        const Sc = { x: P0.x + d[0] * tcc, y: P0.y + d[1] * tcc };
+        const Qk = { x: E.x + n[0] * r.k, y: E.y + n[1] * r.k };
+        const u = r.k - kc;
+        return r.back + ((Sc.x - Qk.x) * d[0] + (Sc.y - Qk.y) * d[1]) + Math.sqrt(Math.max(0, Rs * Rs - u * u));
+      };
+      // 태양이 대기 밖에 있도록: 광선이 대기에 닿기 전에 태양 표면을 떠나야 함
+      let deficit = 0;
+      rays.forEach((r) => { deficit = Math.max(deficit, startOf(r, tc) - (r.tIn - 24)); });
+      tc -= deficit;
+      rays.forEach((r) => { r.tStart = startOf(r, tc) - 3; });
+      this.S = { x: P0.x + d[0] * tc, y: P0.y + d[1] * tc };
+      this.Rs = Rs;
+      this.kc = kc;
+    },
+    drawBigSun(ctx) {
+      const { x, y } = this.S, R0 = this.Rs;
+      const glow = ctx.createRadialGradient(x, y, R0 * 0.9, x, y, R0 * 1.55);
+      glow.addColorStop(0, 'rgba(255,236,180,0.35)');
+      glow.addColorStop(1, 'rgba(255,236,180,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(x, y, R0 * 1.55, 0, 6.2832); ctx.fill();
+      const core = ctx.createRadialGradient(x - R0 * 0.2, y - R0 * 0.2, R0 * 0.1, x, y, R0);
+      core.addColorStop(0, '#ffffff');
+      core.addColorStop(0.7, '#fff6dc');
+      core.addColorStop(1, '#ffd98a');
+      ctx.fillStyle = core;
+      ctx.beginPath(); ctx.arc(x, y, R0, 0, 6.2832); ctx.fill();
+      // 이름표: 원반의 화면 안쪽 가장자리 근처
+      const d = this.d, n = this.n;
+      const lp = { x: x + d[0] * R0 * 0.8 - n[0] * R0 * 0.8, y: y + d[1] * R0 * 0.8 - n[1] * R0 * 0.8 };
+      SR.label(ctx, '태양 (백색광)', SR.clamp(lp.x + 10, 14, SR.W - 160), SR.clamp(lp.y, 24, SR.H - 60), { size: 17, weight: 700, color: '#fff3cf', bg: 'rgba(5,12,28,0.55)' });
+    },
     at(ray, t) { return { x: ray.P0.x + this.d[0] * t, y: ray.P0.y + this.d[1] * t }; },
 
     buildRays() {
@@ -468,7 +518,7 @@
       }
       rays.forEach((r, i) => { r.t = i * 0.55; }); // 출발 시각을 엇갈리게
       // 태양: 관측자를 향한 광선이 화면에 들어오는 가장자리(먼 태양이 그 방향에 있음)
-      if (A) this.S = this.at(A, A.tStart + 12 + 20);
+      this.placeSun(rays);
       this.rays = rays;
       this.ph = [];
     },
@@ -663,6 +713,7 @@
       const d = this.d, n = this.n;
 
       const basic = this.lv === 'basic';
+      this.drawBigSun(ctx);
       this.drawBeam(ctx);
 
       // 관측자에게 오는 햇빛 — 경로를 따라 색이 변함
@@ -714,10 +765,6 @@
       SR.label(ctx, `${this.s.h}°`, E.x + Math.cos(la) * 86, E.y + Math.sin(la) * 86 + 5, { size: 17, color: '#ffe08a', align: 'center' });
       SR.label(ctx, '지평선', E.x + 176, E.y + 6, { size: 15, color: 'rgba(230,240,255,0.7)' });
 
-      // 태양 (화면 가장자리 — 멀리 있는 태양의 방향)
-      SR.drawSun(ctx, this.S.x, this.S.y, 24, [255, 248, 230]);
-      const lx = SR.clamp(this.S.x + 34, 60, SR.W - 200), ly = SR.clamp(this.S.y + (this.s.h > 60 ? 50 : -30), 24, SR.H - 80);
-      SR.label(ctx, '태양 (백색광)', lx, ly, { size: 17, color: '#fff3cf' });
 
       if (basic) this.drawBasicPaths(ctx);
       // 시선
@@ -785,10 +832,14 @@
       if (!rays.length) return;
       const d = this.d, n = this.n;
       let kmin = Infinity, kmax = -Infinity, tFar = 0;
-      rays.forEach((r) => { kmin = Math.min(kmin, r.k); kmax = Math.max(kmax, r.k); tFar = Math.max(tFar, r.tIn); });
+      rays.forEach((r) => { kmin = Math.min(kmin, r.k); kmax = Math.max(kmax, r.k); tFar = Math.max(tFar, r.tIn - r.back + 2400); });
       kmin -= 28; kmax += 28;
-      const c0 = { x: E.x + n[0] * kmin - d[0] * 2400, y: E.y + n[1] * kmin - d[1] * 2400 };
-      const c1 = { x: E.x + n[0] * kmax - d[0] * 2400, y: E.y + n[1] * kmax - d[1] * 2400 };
+      // 태양 원반의 지름을 지나 대기 쪽으로 뻗는 평행광선 띠
+      const S = this.S;
+      const toS = (k) => { const Qk = { x: E.x + n[0] * k, y: E.y + n[1] * k }; const t = (S.x - Qk.x) * d[0] + (S.y - Qk.y) * d[1]; return { x: Qk.x + d[0] * t, y: Qk.y + d[1] * t, t }; };
+      const s0 = toS(kmin), s1 = toS(kmax);
+      tFar = Math.max(...rays.map((r) => r.tIn - r.back)) - s0.t + 40;
+      const c0 = { x: s0.x, y: s0.y }, c1 = { x: s1.x, y: s1.y };
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, SR.W, SR.H);
@@ -821,8 +872,8 @@
           ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, 6.2832); ctx.stroke();
           ctx.lineWidth = 1.2;
         }
-        // 화면 밖에서 들어오는 방향 표시
-        SR.arrowHead(ctx, a.x + d[0] * 34, a.y + d[1] * 34, Math.atan2(d[1], d[0]), 9, 'rgba(255,240,200,0.6)');
+        // 태양 표면을 떠나는 방향 표시
+        SR.arrowHead(ctx, a.x + d[0] * 30, a.y + d[1] * 30, Math.atan2(d[1], d[0]), 9, 'rgba(255,240,200,0.7)');
       });
       // 띠 이름
       // 띠 바깥쪽(위쪽)에 이름표
@@ -880,7 +931,8 @@
 
     // 기본 모드: 관측 결과(태양의 색 / 하늘의 색)
     drawCard(ctx) {
-      const x = 880, y = 14, w = 306, h = 178;
+      const w = 306, h = 178, y = 14;
+      const x = this.S.x > 560 ? 14 : 880; // 태양을 가리지 않게
       ctx.fillStyle = 'rgba(5,12,28,0.8)';
       SR.roundRect(ctx, x, y, w, h, 12); ctx.fill();
       ctx.strokeStyle = 'rgba(150,190,255,0.35)'; ctx.lineWidth = 1.2; ctx.stroke();
@@ -905,7 +957,8 @@
     },
 
     drawView(ctx) {
-      const { x, y, w, h } = VIEW;
+      const { y, w, h } = VIEW;
+      const x = this.S.x > 560 ? 14 : VIEW.x; // 태양을 가리지 않게
       ctx.save();
       SR.roundRect(ctx, x, y, w, h, 10);
       ctx.clip();
