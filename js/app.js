@@ -134,15 +134,19 @@
   app.setLevel = setLevel;
   document.querySelectorAll('#level button').forEach((b) => b.addEventListener('click', () => setLevel(b.dataset.lv)));
 
+  // 하단 설명: 평소에는 핵심 낱말(원인→과정→결과)과 한 줄 요약만, 긴 설명은 '자세히'에서
+  const val = (m, k) => (typeof m[k] === 'function' ? m[k]() : m[k]);
   function renderPrinciple() {
     const m = app.mode;
-    const ol = $('#principle');
-    const pr = app.level === 'basic' && m.principleBasic
-      ? (typeof m.principleBasic === 'function' ? m.principleBasic() : m.principleBasic)
-      : typeof m.principle === 'function' ? m.principle() : m.principle;
-    ol.className = 'flow' + (pr.length === 1 ? ' single' : '');
+    const short = val(m, 'principleShort');
+    const full = app.level === 'basic' && m.principleBasic ? val(m, 'principleBasic') : val(m, 'principle');
     const keys = m.principleKeys || ['원인', '과정', '결과'];
-    ol.innerHTML = pr.map((t, i) => `<li><span class="fk">${pr.length === 1 ? (m.principleKeys ? m.principleKeys[0] : '설명') : keys[i]}</span><br>${t}</li>`).join('');
+    const key = (pr, i) => (pr.length === 1 ? (m.principleKeys ? m.principleKeys[0] : '설명') : keys[i]);
+    const pr = short || full;
+    const ol = $('#principle');
+    ol.className = 'flow' + (pr.length === 1 ? ' single' : '');
+    ol.innerHTML = pr.map((t, i) => `<li><span class="fk">${key(pr, i)}</span><span class="ft">${t}</span></li>`).join('');
+    $('#principleFull').innerHTML = full.map((t, i) => `<li><span class="fk">${key(full, i)}</span> ${t}</li>`).join('');
   }
   app.renderPrinciple = renderPrinciple;
 
@@ -150,13 +154,23 @@
     const m = app.mode;
     if (!m || !m.live) return;
     const L = app.level === 'basic' && m.liveBasic ? m.liveBasic() : m.live();
-    $('#liveNow').innerHTML = L.now;
+    const s = m.liveShort ? m.liveShort() : '';
+    const now = $('#liveNow');
+    now.innerHTML = s;
+    now.hidden = !s;
+    $('#liveFull').innerHTML = L.now;
     const ch = $('#liveChange');
     if (L.change) {
       ch.hidden = false;
       ch.innerHTML = L.change;
     } else ch.hidden = true;
   }
+  $('#exMore').addEventListener('click', (e) => {
+    const d = $('#exDetail');
+    d.hidden = !d.hidden;
+    e.currentTarget.textContent = d.hidden ? '자세히 ▾' : '접기 ▴';
+    e.currentTarget.setAttribute('aria-expanded', String(!d.hidden));
+  });
 
   /* ---------------- 탐구 질문 ---------------- */
   function renderQuiz() {

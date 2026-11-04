@@ -44,6 +44,20 @@
       '관측자는 빛이 들어온 방향의 연장선에 태양이 있다고 보므로, 태양이 실제보다 높게 보인다. 이 효과는 지평선 부근에서 가장 크다.',
     ],
 
+    principleShort() {
+      if (this.snell) return ['아래층일수록 굴절률이 큼', '경계면마다 법선 쪽으로 꺾임 (n₁sinθ₁ = n₂sinθ₂)', '층이 아주 많으면 → 부드러운 곡선'];
+      return ['아래로 갈수록 공기 밀도가 큼', '빛이 아래쪽으로 조금씩 휨', '태양이 실제보다 높게 보임'];
+    },
+    liveShort() {
+      if (this.snell) {
+        const a = this.snellAngles();
+        return `입사각 <b>${a.map((x) => Math.round(x) + '°').join(' → ')}</b> · 아래층으로 갈수록 법선(수직선)에 가까워짐`;
+      }
+      if (this.dl === 0) return '대기 없음 → 빛이 직진, 태양이 <b>실제 위치 그대로</b>';
+      const r = this.realR(this.sol.h);
+      return `태양 고도 <b>${this.sol.h}°</b> → 실제로 약 <b>${fmtMin(r)}(${(r / 60).toFixed(2)}°)</b> 높아 보임 · 그림은 약 ${this.exFactor()}배 과장`;
+    },
+
     quiz: {
       q: '지평선 근처의 태양은 실제 위치보다 높게 보일까, 낮게 보일까?',
       hint: '태양 고도를 0° 가까이 낮추고 ‘실제 위치’와 ‘겉보기 위치’를 비교해 보세요.',
@@ -61,6 +75,10 @@
       this.app = app;
       this.s = { ...this.defaults };
       this.lv = app.level;
+      this.snell = false;
+      this.snAngle = 60;
+      this.snLayers = 0;
+      this.snT = 0;
       this.fx = new SR.Effects();
       this.buildPanel();
       this.recompute();
@@ -73,6 +91,18 @@
       this.fx.clear();
     },
 
+    toggleSnell() {
+      this.snell = !this.snell;
+      this.snT = 0;
+      this.mainSecs.forEach((e) => { e.style.display = this.snell ? 'none' : ''; });
+      this.secSnell.style.display = this.snell ? '' : 'none';
+      this.btnSnell.textContent = this.snell ? '← 굴절 화면으로 돌아가기' : '스넬의 법칙 알아보기';
+      this.btnSnell.classList.toggle('btn-acc', this.snell);
+      this.change = '';
+      this.app.renderPrinciple();
+      this.app.refreshLive();
+      this.app.markDirty();
+    },
     setLevel(lv) {
       this.lv = lv;
       this.app.markDirty();
@@ -182,7 +212,27 @@
       s2.classList.add('adv-only');
       const foot = SR.el('div', 'pnl-foot adv-only');
       foot.appendChild(ui.button('조건 기본값으로', () => this.restoreDefaults(), 'btn-ghost'));
-      p.append(s1, s2, foot);
+      // ── 스넬의 법칙 알아보기 ──
+      this.btnSnell = ui.button('스넬의 법칙 알아보기', () => this.toggleSnell(), 'btn-snell');
+      this.btnSnell.style.width = '100%';
+      this.btnSnell.style.marginTop = '6px';
+      this.mainSecs = [s1, s2, foot];
+      const sn = ui.section('스넬의 법칙 알아보기', '층의 굴절률 1.00 · 1.10 · 1.20은 원리를 보기 위해 과장한 값입니다(실제 지표 공기는 약 1.0003).');
+      this.ctl.snAngle = ui.slider({
+        label: '상층에서의 입사각', min: 20, max: 70, value: this.snAngle, unit: '°',
+        ends: ['20°', '70°'],
+        onInput: (v) => { this.snAngle = v; this.snT = 0; this.app.markDirty(); this.app.refreshLive(); },
+      });
+      this.ctl.snLayers = ui.segmented({
+        label: '② 오른쪽 대기의 층 수',
+        value: this.snLayers,
+        options: [{ value: 3, label: '3층' }, { value: 6, label: '6층' }, { value: 12, label: '12층' }, { value: 0, label: '연속' }],
+        onChange: (v) => { this.snLayers = +v; this.snT = 0; this.app.markDirty(); },
+      });
+      sn.append(this.ctl.snAngle.el, this.ctl.snLayers.el);
+      sn.style.display = 'none';
+      this.secSnell = sn;
+      p.append(this.btnSnell, s1, s2, sn, foot);
       this.panel = p;
     },
 
@@ -334,6 +384,7 @@
       return { x, y, tx: (pts[hi * 2] - pts[lo * 2]) / seg, ty: (pts[hi * 2 + 1] - pts[lo * 2 + 1]) / seg };
     },
     update(dt) {
+      if (this.snell) { this.snT += dt; return; }
       this.acc += 3.2 * dt;
       while (this.acc >= 1) {
         this.acc -= 1;
@@ -455,7 +506,155 @@
       SR.label(ctx, '실제 고도', gx + gw, gy + gh + 30, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
     },
 
+    /* ---------------- 스넬의 법칙 알아보기 ---------------- */
+    // 층마다의 각도: n_i sinθ_i = n_1 sinθ_1 (3층: 1.00, 1.10, 1.20)
+    snellAngles() {
+      const ns = [1.0, 1.1, 1.2];
+      const k = Math.sin(this.snAngle * D) * ns[0];
+      return ns.map((n) => Math.asin(k / n) / D);
+    },
+    // N층(또는 연속, N=0) 대기를 지나는 경로. 굴절률은 위 1.00 → 아래 1.20
+    snellPath(box, N) {
+      const top = box.y, H = box.h;
+      const k = Math.sin(this.snAngle * D) * 1.0;
+      const pts = [box.x + 18, top];
+      let x = box.x + 18, y = top;
+      const bounds = [];
+      if (N > 0) {
+        const lh = H / N;
+        for (let i = 0; i < N; i++) {
+          const n = 1 + (0.2 * i) / (N - 1);
+          const th = Math.asin(k / n);
+          x += Math.tan(th) * lh; y += lh;
+          pts.push(x, y);
+          if (i < N - 1) bounds.push({ x, y, thIn: Math.asin(k / n) / D, thOut: Math.asin(k / (1 + (0.2 * (i + 1)) / (N - 1))) / D, n1: n, n2: 1 + (0.2 * (i + 1)) / (N - 1) });
+        }
+      } else {
+        const steps = 240, dy = H / steps;
+        for (let i = 0; i < steps; i++) {
+          const n = 1 + 0.2 * ((i + 0.5) / steps);
+          x += Math.tan(Math.asin(k / n)) * dy; y += dy;
+          pts.push(x, y);
+        }
+      }
+      return { pts, bounds };
+    },
+    // 상자에 경로가 들어가도록 층 높이를 정함
+    snellBox(x, w) {
+      const a = this.snellAngles().map((t) => Math.tan(t * D));
+      const sum = a.reduce((p, q) => p + q, 0);
+      const h = Math.min(420, ((w - 50) / sum) * 3);
+      return { x, y: 150, w, h };
+    },
+    drawSnellLayers(ctx, box, N) {
+      const lays = N > 0 ? N : 60;
+      for (let i = 0; i < lays; i++) {
+        const f = lays === 1 ? 0 : i / (lays - 1);
+        ctx.fillStyle = `rgba(150,120,255,${0.06 + 0.32 * f})`;
+        ctx.fillRect(box.x, box.y + (box.h * i) / lays, box.w, box.h / lays + 0.5);
+      }
+      if (N > 0) {
+        ctx.strokeStyle = 'rgba(220,210,255,0.55)';
+        ctx.lineWidth = 1.2;
+        for (let i = 1; i < N; i++) { const yy = box.y + (box.h * i) / N; ctx.beginPath(); ctx.moveTo(box.x, yy); ctx.lineTo(box.x + box.w, yy); ctx.stroke(); }
+      }
+      ctx.strokeStyle = 'rgba(220,210,255,0.35)';
+      ctx.strokeRect(box.x, box.y, box.w, box.h);
+      // 지표
+      ctx.fillStyle = '#2f5b3d';
+      ctx.fillRect(box.x, box.y + box.h, box.w, 14);
+      SR.label(ctx, '지표', box.x + box.w - 6, box.y + box.h + 30, { size: 13, align: 'right', color: 'rgba(210,240,210,0.85)' });
+    },
+    drawPathAnimated(ctx, pts, col, w, t) {
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
+      for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+      ctx.stroke();
+      // 진행하는 빛 알갱이
+      let L = 0; const seg = [];
+      for (let i = 2; i < pts.length; i += 2) { const l = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]); seg.push(l); L += l; }
+      let d = ((t * 170) % (L + 120));
+      if (d > L) return;
+      for (let i = 0; i < seg.length; i++) {
+        if (d <= seg[i]) {
+          const f = d / seg[i];
+          const x = pts[i * 2] + (pts[i * 2 + 2] - pts[i * 2]) * f, y = pts[i * 2 + 1] + (pts[i * 2 + 3] - pts[i * 2 + 1]) * f;
+          ctx.globalCompositeOperation = 'lighter';
+          SR.drawPhoton(ctx, { x, y, trail: [], col: [255, 236, 180], a: 1, r: 4 });
+          ctx.globalCompositeOperation = 'source-over';
+          return;
+        }
+        d -= seg[i];
+      }
+    },
+    drawSnell(ctx) {
+      ctx.fillStyle = '#071025';
+      ctx.fillRect(0, 0, SR.W, SR.H);
+      SR.label(ctx, '스넬의 법칙으로 이해하기: 빛은 왜 지표 쪽으로 휠까?', 30, 40, { size: 20, weight: 800 });
+      SR.label(ctx, 'n₁ sin θ₁ = n₂ sin θ₂  — 굴절률이 큰 층으로 들어가면 빛이 법선(경계면에 수직인 선) 쪽으로 꺾입니다.', 30, 70, { size: 15, color: '#e3d8ff' });
+      const t = this.snT;
+      // ① 3개 층
+      const A = this.snellBox(40, 520);
+      SR.label(ctx, '① 3개 층으로 단순화한 대기', A.x, 118, { size: 17, weight: 800, color: SR.ACCENT.refract });
+      this.drawSnellLayers(ctx, A, 3);
+      const ns = ['상층: 밀도 작음 → n = 1.00', '중층: 밀도 중간 → n = 1.10', '하층: 밀도 큼 → n = 1.20'];
+      ns.forEach((txt, i) => SR.label(ctx, txt, i === 0 ? A.x + A.w - 8 : A.x + 8, A.y + (A.h / 3) * (i + 1) - 10, { size: 13, align: i === 0 ? 'right' : 'left', color: 'rgba(235,230,255,0.9)' }));
+      const P3 = this.snellPath(A, 3);
+      // 꺾이지 않았다면(첫 경계면에서 직진)
+      const b0 = P3.bounds[0];
+      if (b0) {
+        const th = this.snAngle * D;
+        ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(255,214,120,0.55)'; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(b0.x, b0.y); ctx.lineTo(b0.x + Math.sin(th) * 90, b0.y + Math.cos(th) * 90); ctx.stroke();
+        ctx.setLineDash([]);
+        SR.label(ctx, '꺾이지 않았다면', b0.x + Math.sin(th) * 90 + 6, b0.y + Math.cos(th) * 90 + 4, { size: 12, color: 'rgba(255,214,120,0.85)' });
+      }
+      this.drawPathAnimated(ctx, P3.pts, 'rgba(255,240,205,0.95)', 3.2, t);
+      // 법선과 각도
+      const ang = this.snellAngles();
+      const angleMark = (x, y, thDeg, up, col, label) => {
+        // 법선(수직) 기준 각도: 위쪽(입사)·아래쪽(굴절)
+        const r = 34;
+        ctx.strokeStyle = col; ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (up) ctx.arc(x, y, r, -Math.PI / 2 - thDeg * D, -Math.PI / 2);
+        else ctx.arc(x, y, r, Math.PI / 2 - thDeg * D, Math.PI / 2);
+        ctx.stroke();
+        const mid = up ? -Math.PI / 2 - (thDeg * D) / 2 : Math.PI / 2 - (thDeg * D) / 2;
+        SR.label(ctx, label, x + Math.cos(mid) * (r + 18), y + Math.sin(mid) * (r + 18) + 5, { size: 14, weight: 800, align: 'center', color: col, bg: 'rgba(4,10,24,0.65)' });
+      };
+      P3.bounds.forEach((b, i) => {
+        ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(b.x, b.y - 60); ctx.lineTo(b.x, b.y + 60); ctx.stroke();
+        ctx.setLineDash([]);
+        angleMark(b.x, b.y, ang[i], true, '#ffd166', `${Math.round(ang[i])}°`);
+        angleMark(b.x, b.y, ang[i + 1], false, SR.ACCENT.refract, `${Math.round(ang[i + 1])}°`);
+        SR.label(ctx, `${ang[i] === ang[0] && i === 0 ? '1.00' : '1.10'} × sin ${Math.round(ang[i])}° = ${i === 0 ? '1.10' : '1.20'} × sin ${Math.round(ang[i + 1])}°`, b.x + 14, b.y - 8, { size: 13, color: '#efe6ff', bg: 'rgba(4,10,24,0.7)' });
+      });
+      SR.label(ctx, '┆ 법선', A.x + 4, A.y + A.h + 32, { size: 13, color: 'rgba(255,255,255,0.8)' });
+      SR.label(ctx, '경계면마다 꺾여 아래로 갈수록 수직(법선)에 가까워짐', A.x, A.y + A.h + 58, { size: 14, color: '#e3d8ff' });
+      // ② 실제 대기(연속) 또는 여러 층
+      const N = this.snLayers;
+      const B2 = { x: 640, y: A.y, w: 520, h: A.h };
+      SR.label(ctx, N ? `② 층을 ${N}개로 나눈 대기` : '② 실제 대기 모형: 굴절률이 연속적으로 변함', B2.x, 118, { size: 17, weight: 800, color: SR.ACCENT.refract });
+      this.drawSnellLayers(ctx, B2, N);
+      SR.label(ctx, '위: n = 1.00', B2.x + B2.w - 8, B2.y + 22, { size: 13, align: 'right', color: 'rgba(235,230,255,0.9)' });
+      SR.label(ctx, '아래: n = 1.20', B2.x + 8, B2.y + B2.h - 10, { size: 13, color: 'rgba(235,230,255,0.9)' });
+      // 비교: 3층 경로(점선)
+      const P3b = this.snellPath(B2, 3);
+      ctx.setLineDash([5, 5]); ctx.strokeStyle = 'rgba(255,214,120,0.5)'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(P3b.pts[0], P3b.pts[1]);
+      for (let i = 2; i < P3b.pts.length; i += 2) ctx.lineTo(P3b.pts[i], P3b.pts[i + 1]);
+      ctx.stroke(); ctx.setLineDash([]);
+      const PN = this.snellPath(B2, N);
+      this.drawPathAnimated(ctx, PN.pts, 'rgba(225,205,255,0.98)', 3.2, t);
+      SR.label(ctx, '- - 3개 층일 때의 경로', B2.x + 6, B2.y + B2.h + 32, { size: 13, color: 'rgba(255,214,120,0.85)' });
+      SR.label(ctx, N ? `층을 더 잘게 나눌수록 꺾임이 작아지고 많아져 곡선에 가까워짐` : '아주 많은 층에서 조금씩 꺾이면 → 부드러운 곡선 경로', B2.x, B2.y + B2.h + 58, { size: 14, color: '#e3d8ff' });
+      SR.label(ctx, '※ 굴절률 1.00·1.10·1.20은 원리를 보기 위해 과장한 값입니다. 실제 대기는 지표 부근도 약 1.0003으로, 휘어짐이 매우 작습니다.', SR.W / 2, SR.H - 14, { size: 13, align: 'center', color: 'rgba(225,232,245,0.85)', bg: 'rgba(4,10,24,0.6)' });
+    },
+
     draw(ctx) {
+      if (this.snell) { this.drawSnell(ctx); return; }
       const key = this.s.dens;
       if (this.bgKey !== key || !this.bg || this.bg.ps !== this.app.ps) {
         this.bg = SR.makeLayer(this.bg, this.app.ps, (c) => this.drawBackground(c));

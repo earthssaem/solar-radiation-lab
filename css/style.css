@@ -316,22 +316,30 @@ input[type="range"]:focus-visible { outline: 2px solid var(--acc); outline-offse
   padding: 10px 16px;
   background: rgba(13, 26, 53, 0.55);
 }
-.flow { list-style: none; margin: 0 0 8px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; counter-reset: f; }
-.flow li { position: relative; font-size: 15px; line-height: 1.48; color: var(--text); padding-left: 0; }
+.ex-top { display: flex; align-items: center; gap: 12px; }
+.flow { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.flow li { display: inline-flex; align-items: center; gap: 8px; font-size: 16.5px; font-weight: 600; line-height: 1.4; color: var(--text); }
 .flow li .fk {
-  display: inline-block; font-size: 12.5px; font-weight: 800; letter-spacing: 0.04em;
-  color: #06101f; background: var(--acc); border-radius: 6px; padding: 1px 8px; margin-bottom: 4px;
+  flex: none; font-size: 12.5px; font-weight: 800; letter-spacing: 0.04em;
+  color: #06101f; background: var(--acc); border-radius: 6px; padding: 1px 8px;
 }
-.flow li:not(:last-child)::after {
-  content: "→"; position: absolute; right: -10px; top: 0; color: var(--acc); font-weight: 800;
+.flow li:not(:last-child)::after { content: "→"; color: var(--acc); font-weight: 800; margin-left: 4px; }
+.flow.single li { font-weight: 500; }
+.ex-more {
+  flex: none; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line2);
+  background: transparent; color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer;
 }
-.flow.single { grid-template-columns: 1fr; }
-.flow.single li::after { display: none; }
-.live { border-top: 1px dashed var(--line2); padding-top: 9px; }
-.live-now { font-size: 15.5px; color: #d5def0; }
+.ex-more:hover { color: var(--text); border-color: var(--acc); }
+.live-now { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line2); font-size: 16px; color: #d5def0; }
+.live-now::before { content: "지금 › "; color: var(--acc); font-weight: 800; }
 .live-now b { color: var(--text); }
+.ex-detail { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line2); font-size: 14.5px; color: #c9d4ea; max-height: 190px; overflow-y: auto; }
+.flow-full { list-style: none; margin: 0 0 6px; padding: 0; }
+.flow-full li { margin: 3px 0; line-height: 1.5; }
+.flow-full .fk { font-size: 12px; font-weight: 800; color: var(--acc); margin-right: 4px; }
+.live-full { line-height: 1.55; }
 .live-change {
-  margin-top: 6px; font-size: 15px; padding: 6px 10px; border-left: 3px solid var(--acc);
+  margin-top: 6px; font-size: 14.5px; padding: 6px 10px; border-left: 3px solid var(--acc);
   background: rgba(255, 255, 255, 0.04); border-radius: 0 8px 8px 0; color: var(--text);
 }
 .live-change::before { content: "방금 바꾼 조건 › "; color: var(--acc); font-weight: 700; }
@@ -388,8 +396,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--acc); outline-offse
   #panelBody { overflow: visible; }
   .stage { flex: none; }
   .panel { overflow: visible; }
-  .flow { grid-template-columns: 1fr; }
-  .flow li:not(:last-child)::after { content: "↓"; right: auto; left: auto; position: static; margin-left: 8px; }
+  .flow li { font-size: 15px; }
   .tabs { justify-content: flex-start; }
 }
 @media (max-width: 560px) {

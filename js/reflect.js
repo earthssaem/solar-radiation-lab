@@ -48,6 +48,18 @@
       '반사율이 높은 표면일수록 같은 양의 햇빛을 받아도 흡수하는 에너지가 적어 덜 데워진다.',
     ],
 
+    principleShort: ['같은 햇빛 100', '반사율만큼 반사, 나머지 흡수', '반사율이 낮을수록 더 데워짐'],
+    liveShort() {
+      const one = (k, r) => {
+        const f = split(k, r);
+        return `<b>${SURF[k].name}</b> 반사 ${f.r} · 흡수 ${f.a}` + (SURF[k].cloud ? ` · 투과 ${f.t}` : '');
+      };
+      if (!this.cmp()) return one(this.s.a, this.s.ra);
+      const A = this.s.ra, B = this.s.rb;
+      const hi = A >= B ? this.s.a : this.s.b;
+      return `${one(this.s.a, A)} &nbsp;|&nbsp; ${one(this.s.b, B)}` + (A !== B ? ` → <b>${SR.j(SURF[hi].name, '이')} ${Math.abs(A - B)} 더 반사</b>` : '');
+    },
+
     quiz: {
       q: '같은 양의 태양 복사 에너지가 들어올 때, 눈과 풀 중 어느 쪽이 더 많은 에너지를 반사할까?',
       hint: '대상 A·B에 눈과 풀을 골라 반사되는 양을 비교해 보세요.',

@@ -67,14 +67,14 @@
 
   const STEPS = [
     {
-      title: '태양 복사 에너지의 입사', color: '#ffd166',
+      title: '태양 복사 에너지의 입사', short: '태양 복사 에너지가 대기로 들어온다', color: '#ffd166',
       text: '태양에서 온 복사 에너지가 대기의 위쪽 경계로 들어옵니다. 이 빛에는 자외선·가시광선·적외선이 섞여 있습니다.',
       look: '태양에서 나온 평행한 광선이 점선(대기의 위쪽 경계)을 지나 대기로 들어오는 모습',
       label: ['대기로 들어오는 햇빛', 250, TOP + 34],
       paths: [170, 330, XB_CLOUD].map((xb) => ({ pts: seg(start(xb), [atY(xb, TOP + 60), TOP + 60]), col: C.sun, w: 4, end: 'arrow', fx: { t: 'spark', at: [atY(xb, TOP), TOP] } })),
     },
     {
-      title: '대기 중에서 산란', color: SR.ACCENT.scatter,
+      title: '대기 중에서 산란', short: '파란빛이 공기 분자에 더 잘 산란된다', color: SR.ACCENT.scatter,
       text: '햇빛이 공기 분자를 만나 여러 방향으로 흩어집니다. 파장이 짧은 파란빛이 더 잘 산란되며, 관측자 쪽으로 산란된 파란빛 때문에 하늘이 파랗게 보입니다.',
       look: '한 점에서 파란빛이 여러 방향으로 흩어지고, 그중 하나가 관측자의 눈으로 들어가는 모습',
       label: ['공기 분자에 의한 산란', PS.x + 30, PS.y - 30],
@@ -89,7 +89,7 @@
       ],
     },
     {
-      title: '구름에서 반사', color: SR.ACCENT.reflect,
+      title: '구름에서 반사', short: '구름이 햇빛의 상당 부분을 우주로 반사한다', color: SR.ACCENT.reflect,
       text: '구름에 도달한 빛의 상당 부분은 반사되어 우주로 되돌아갑니다. 두꺼운 구름일수록 반사율이 높고(70~90%), 일부는 구름을 통과합니다.',
       look: '구름 윗면에서 굵은 빛이 위로 되돌아가고, 가는 빛만 구름 아래로 빠져나가는 모습',
       label: ['구름의 반사', HIT.x + 70, HIT.y - 130],
@@ -101,7 +101,7 @@
       ],
     },
     {
-      title: '대기에서 흡수', color: SR.ACCENT.absorb,
+      title: '대기에서 흡수', short: '오존은 자외선, 수증기는 적외선 일부를 흡수한다', color: SR.ACCENT.absorb,
       text: '오존은 주로 자외선을, 수증기는 적외선의 일부를 흡수합니다(구름도 일부를 흡수). 흡수된 에너지는 대기를 데웁니다. 가시광선은 대부분 흡수되지 않고 통과합니다.',
       look: '보라색 자외선은 오존층에서, 분홍색 적외선은 지표 가까운 수증기에서 사라지며 열(주황)로 바뀌는 모습',
       label: ['대기와 구름의 흡수', 470, 150],
@@ -112,14 +112,14 @@
       ],
     },
     {
-      title: '지표에 도달', color: '#ffe9a8',
+      title: '지표에 도달', short: '나머지 햇빛이 지표에 도달한다', color: '#ffe9a8',
       text: '대기를 통과한 햇빛(과 산란되어 아래로 향한 빛의 일부)이 지표에 도달합니다.',
       look: '햇빛이 대기를 지나 지표에 닿는 지점',
       label: ['지표에 도달', G.x - 150, G.y - 40],
       paths: [{ pts: P5, col: C.sun, w: 4.5, end: 'spark' }],
     },
     {
-      title: '지표에서 반사와 흡수', color: SR.ACCENT.absorb,
+      title: '지표에서 반사와 흡수', short: '지표는 일부를 반사하고 대부분 흡수해 데워진다', color: SR.ACCENT.absorb,
       text: '지표에 도달한 빛 중 일부는 반사되고, 나머지는 지표에 흡수되어 지표의 온도를 높입니다. 화살표의 굵기는 반사보다 흡수가 많다는 것을 나타냅니다(반사율은 지표 상태에 따라 다름).',
       look: '가는 민트색 화살표(반사)와 굵은 주황색 화살표(흡수) 비교',
       label: ['지표의 반사와 흡수', G.x + 60, G.y - 100],
@@ -129,14 +129,14 @@
       ],
     },
     {
-      title: '대기를 지나며 굴절', color: SR.ACCENT.refract,
+      title: '대기를 지나며 굴절', short: '빛은 대기를 지나는 내내 조금씩 휜다(크게 과장)', color: SR.ACCENT.refract,
       text: '굴절은 맨 마지막에 일어나는 현상이 아닙니다. 빛은 대기를 지나는 동안 내내 밀도 차이 때문에 조금씩 휘어집니다. 여기서는 대기를 통과하는 광선 하나를 다시 골라 그 휘어짐을 크게 과장해 관찰합니다.',
       look: '점선(직진했을 경우)보다 실제 경로가 지표 쪽으로 조금씩 휘는 모습 (실제로는 매우 작음)',
       label: ['굴절 (크게 과장)', 70, 330],
       paths: [{ pts: R7, col: C.refr, w: 3.5, end: 'arrow' }],
     },
     {
-      title: '정리: 태양 복사 에너지의 여행', color: '#ffd166',
+      title: '정리: 태양 복사 에너지의 여행', short: '산란·반사·흡수·굴절이 한 장면에 모였다', color: '#ffd166',
       text: '하나의 장면에 산란·반사·흡수·굴절이 모두 모였습니다. 실제로는 이 현상들이 정해진 순서로 일어나지 않고, 빛마다 다른 과정을 겪습니다.',
       look: '학습지의 개념도와 비교하며 각 화살표가 어떤 현상인지 말해 보기',
       paths: [],
@@ -158,6 +158,12 @@
     principleKeys: null,
     quizBottom: true, // 단계 목록이 길어 탐구 질문은 아래쪽에 둠
 
+    principleShort() {
+      const st = STEPS[this.k];
+      this.principleKeys = [`${this.k + 1}단계 · ${st.title}`];
+      return [st.short];
+    },
+    liveShort() { return ''; },
     principle() {
       const st = STEPS[this.k];
       this.principleKeys = [`${this.k + 1}단계 · ${st.title}`];

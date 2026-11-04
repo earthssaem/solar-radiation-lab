@@ -59,9 +59,14 @@
 
   <section class="explain" id="explain">
     <div class="ex-main">
-      <ol class="flow" id="principle"></ol>
-      <div class="live">
-        <div class="live-now" id="liveNow"></div>
+      <div class="ex-top">
+        <ol class="flow" id="principle"></ol>
+        <button type="button" class="ex-more" id="exMore" aria-expanded="false">자세히 ▾</button>
+      </div>
+      <div class="live-now" id="liveNow"></div>
+      <div class="ex-detail" id="exDetail" hidden>
+        <ol class="flow-full" id="principleFull"></ol>
+        <div class="live-full" id="liveFull"></div>
         <div class="live-change" id="liveChange" hidden></div>
       </div>
     </div>

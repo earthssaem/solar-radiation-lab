@@ -48,6 +48,13 @@
   const peak = (T) => 2898 / T;
   const B_SUN_MAX = B(peak(T_SUN), T_SUN), B_EARTH_MAX = B(peak(T_EARTH), T_EARTH);
   const spec = (l, kind) => (kind === 'sun' ? B(l, T_SUN) / B_SUN_MAX : B(l, T_EARTH) / B_EARTH_MAX);
+  // 실제 세기: 표면의 분광 복사 방출도 M(λ,T) = 2πhc²/λ⁵ / (e^(hc/λkT) − 1), 단위 W/(m²·μm)
+  const Mex = (l, T) => { const lm = l * 1e-6; return (3.7418e-16 / (Math.pow(lm, 5) * (Math.exp(1.4388e-2 / (lm * T)) - 1))) * 1e-6; };
+  const M_SUN_PEAK = Mex(peak(T_SUN), T_SUN);      // ≈ 8.4×10⁷
+  const M_EARTH_PEAK = Mex(peak(T_EARTH), T_EARTH); // ≈ 26
+  const SUN_DIL = (6.957e8 / 1.496e11) ** 2;        // 태양 표면 → 지구 대기 위(거리 제곱에 반비례)
+  const REAL = { sun: M_SUN_PEAK * SUN_DIL, earth: M_EARTH_PEAK }; // 장면 그래프의 최댓값(W/(m²·μm))
+  const sup = (n) => String(n).split('').map((c) => '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'['0123456789-'.indexOf(c)]).join('');
 
   /* ---------------- 장면 ---------------- */
   const SW = 720;                   // 시뮬레이션 장면 폭
@@ -134,6 +141,24 @@
       }[this.s.scene];
     },
 
+    principleShort() {
+      return {
+        sun: ['태양: 단파 복사(최대 ≈0.5 μm)', '기체마다 특정 파장만 흡수', '가시광선은 대부분 지표까지'],
+        earth: ['지구: 장파 복사(최대 ≈10 μm)', '온실 기체가 흡수 → 여러 방향 재방출', '일부가 지표로 → 온실 효과'],
+        compare: ['표면 온도가 다름', '최대 에너지 파장이 다름', '태양 ≈0.5 μm · 지구 ≈10 μm'],
+      }[this.s.scene];
+    },
+    liveShort() {
+      const sc = this.s.scene;
+      if (sc === 'compare') return '온도가 높은 태양은 <b>짧은 파장</b>, 온도가 낮은 지구는 <b>긴 파장</b>을 주로 방출';
+      const v = this.sel();
+      const t = {
+        sun: { all: '자외선 일부 → <b>오존층</b> · 적외선 일부 → <b>수증기·CO₂</b> · 가시광선 → <b>지표</b>', o3: '오존·산소: <b>파장이 짧은 자외선</b>을 위쪽에서 흡수', h2o: '수증기: <b>적외선의 좁은 띠</b>만 흡수, 띠 사이는 통과', co2: '이산화 탄소: <b>2.7 μm 부근</b> 등 일부 적외선만 흡수', vis: '가시광선: 거의 흡수되지 않고 <b>지표까지</b>' },
+        earth: { all: '온실 기체가 흡수 → <b>여러 방향 재방출</b> · 대기의 창 → <b>우주로</b>', h2o: '수증기: <b>6.3 μm 부근, 18 μm 이상</b> 흡수', co2: '이산화 탄소: <b>15 μm 부근</b>을 강하게 흡수', ch4: '메테인: <b>7.7 μm 부근</b> 흡수', n2o: '산화 이질소: <b>7.8·17 μm 부근</b> 흡수', win: '대기의 창(8~13 μm): 대부분 <b>우주로</b> (9.6 μm는 오존이 일부 흡수)' },
+      }[sc][v];
+      return t + (sc === 'earth' && this.back > 0.3 ? ' · 지금 재방출 복사가 <b>지표로 돌아옴</b>' : '');
+    },
+
     quiz: [
       {
         q: '태양 복사 에너지와 지구 복사 에너지 중 최대 에너지 파장이 더 긴 것은?',
@@ -168,7 +193,7 @@
     init(app) {
       this.app = app;
       this.lv = app.level;
-      this.s = { scene: 'sun', sel: { sun: 'all', earth: 'all' } };
+      this.s = { scene: 'sun', sel: { sun: 'all', earth: 'all' }, cmp: 'split' };
       this.fx = new SR.Effects();
       this.makeMolecules();
       this.buildPanel();
@@ -207,6 +232,18 @@
         },
       });
       s0.appendChild(this.ctlScene.el);
+      // 스펙트럼 비교: 실제 세기를 두 그래프(각자 눈금)로 또는 하나의 로그 눈금으로
+      this.ctlCmp = ui.segmented({
+        label: '그래프 눈금 (실제 세기)',
+        value: this.s.cmp,
+        options: [{ value: 'split', label: '각각의 눈금 (학습지처럼)' }, { value: 'log', label: '하나의 로그 눈금' }],
+        onChange: (v) => {
+          this.s.cmp = v;
+          this.change = v === 'split' ? '태양과 지구를 각자의 세로 눈금으로 그렸습니다. 세로축 숫자의 크기를 비교해 보세요.' : '두 복사를 같은 로그 눈금(한 칸마다 10배)에 그려 실제 크기 차이를 한눈에 봅니다.';
+          this.onChange();
+        },
+      });
+      s0.appendChild(this.ctlCmp.el);
       this.secSel = ui.section('기체 선택', '고른 기체가 흡수하는 파장이 그래프와 장면에서 함께 강조됩니다.');
       this.selWrap = SR.el('div');
       this.secSel.appendChild(this.selWrap);
@@ -230,6 +267,7 @@
       const sc = this.s.scene;
       this.selWrap.innerHTML = '';
       this.secSel.style.display = sc === 'compare' ? 'none' : '';
+      if (this.ctlCmp) this.ctlCmp.el.style.display = sc === 'compare' ? '' : 'none';
       if (sc === 'compare') return;
       this.ctlSel = SR.ui.segmented({
         grid: true,
@@ -583,7 +621,17 @@
         SR.label(c, String(t), X(t), y + h + 19, { size: 12, align: 'center', color: 'rgba(210,222,240,0.85)' });
       });
       SR.label(c, '파장(μm)', x + w, y + h + 36, { size: 12, align: 'right', color: 'rgba(210,222,240,0.85)' });
-      SR.label(c, '세기', x - 4, y + 10, { size: 11, align: 'right', color: 'rgba(210,222,240,0.7)' });
+      if (opt.real) {
+        // 세로축: 실제 단위(W/(m²·μm))
+        const { max, step } = opt.real;
+        for (let v2 = 0; v2 <= max * 1.12; v2 += step) {
+          const yy = Y(v2 / max);
+          c.strokeStyle = 'rgba(210,220,245,0.12)';
+          c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke();
+          SR.label(c, v2 >= 1000 ? v2.toLocaleString('ko-KR') : String(v2), x - 5, yy + 4, { size: 11, align: 'right', color: 'rgba(210,222,240,0.75)' });
+        }
+        SR.label(c, 'W/(m²·μm)', x - 2, y - 4, { size: 11, color: 'rgba(210,222,240,0.75)' });
+      } else SR.label(c, '세기', x - 4, y + 10, { size: 11, align: 'right', color: 'rgba(210,222,240,0.7)' });
       [['자외선', 0.1, 0.4], ['가시광선', 0.4, 0.7], ['적외선', 0.7, range[1]]].forEach(([n, a, b]) => {
         const a2 = Math.max(a, range[0]), b2 = Math.min(b, range[1]);
         if (b2 <= a2 || X(b2) - X(a2) < 34) return;
@@ -634,7 +682,7 @@
       SR.label(c, sc === 'sun' ? '태양 복사 스펙트럼과 흡수되는 부분' : '지구 복사 스펙트럼과 흡수되는 부분', CH.x - 10, 26, { size: 15, weight: 700 });
       const chartH = this.lv === 'basic' ? 250 : 210;
       this.chartBox = { x: CH.x + 28, y: 46, w: CH.w - 40, h: chartH };
-      this.drawSpectrumChart(c, this.chartBox, sc, range, { peaks: true });
+      this.drawSpectrumChart(c, this.chartBox, sc, range, { peaks: true, real: sc === 'sun' ? { max: REAL.sun, step: 500 } : { max: REAL.earth, step: 5 } });
       const v = this.sel();
       const ac = v === 'all' ? '흡수되는 부분(전체 대기)' : v === 'win' ? '흡수되는 부분(전체 대기) · 초록 = 대기의 창' : v === 'vis' ? '점선 상자 = 가시광선(흡수 거의 없음)' : `${GAS[v].name}가 흡수하는 부분`;
       SR.label(c, `■ ${ac}`, CH.x + 28, this.chartBox.y + chartH + 54, { size: 13, color: GAS[v] ? SR.css(GAS[v].col) : '#93c5fd' });
@@ -643,24 +691,101 @@
         this.drawStrips(c, { x: CH.x + 92, y: 382, w: CH.w - 104, h: 46 }, range, ks);
         SR.label(c, sc === 'sun' ? '태양 복사 ↓ 위에서 아래로 들어옴' : '지구 복사 ↑ 지표에서 위로 나감', CH.x + 28, 478, { size: 16, weight: 800, color: sc === 'sun' ? '#ffd166' : '#ff9a5a' });
         SR.label(c, sc === 'sun' ? `표면 온도 약 ${T_SUN} K · 최대 약 ${peak(T_SUN).toFixed(1)} μm · 단파 복사` : `표면 온도 약 ${T_EARTH} K · 최대 약 ${peak(T_EARTH).toFixed(0)} μm · 장파 복사`, CH.x + 28, 504, { size: 14, color: 'rgba(230,236,248,0.85)' });
-        SR.label(c, '곡선은 최댓값을 1로 맞춘 모양(실제 세기 아님)', CH.x + 28, 530, { size: 12, color: 'rgba(210,222,240,0.65)' });
+        SR.label(c, sc === 'sun' ? '세기: 지구 대기 위에 도달하는 태양 복사(5800 K 흑체로 계산)' : '세기: 288 K 지표가 방출하는 복사(흑체로 계산)', CH.x + 28, 530, { size: 12, color: 'rgba(210,222,240,0.7)' });
       } else {
         const ks = sc === 'sun' ? ['o3', 'h2o', 'co2', 'tot'] : ['h2o', 'co2', 'ch4', 'n2o', 'o3', 'tot'];
         this.drawStrips(c, { x: CH.x + 72, y: 362, w: CH.w - 84, h: sc === 'sun' ? 190 : 270 }, range, ks);
-        SR.label(c, '곡선은 최댓값을 1로 맞춘 모양(실제 세기 아님)', CH.x - 6, SR.H - 10, { size: 12, color: 'rgba(210,222,240,0.65)' });
+        SR.label(c, sc === 'sun' ? '세기: 지구 대기 위에 도달하는 태양 복사(5800 K 흑체로 계산)' : '세기: 288 K 지표가 방출하는 복사(흑체로 계산)', CH.x - 6, SR.H - 10, { size: 12, color: 'rgba(210,222,240,0.7)' });
       }
     },
 
+    // 실제 세기 그래프 하나(선형 파장·선형 세기)
+    drawRealPanel(c, box, T, xr, ymax, ystep, yfmt, col) {
+      const { x, y, w, h } = box;
+      const X = (l) => x + ((l - xr[0]) / (xr[1] - xr[0])) * w;
+      const Y = (v) => y + h - (v / ymax) * h;
+      for (let v = 0; v <= ymax + 1e-9; v += ystep) {
+        c.strokeStyle = 'rgba(210,220,245,0.12)';
+        c.beginPath(); c.moveTo(x, Y(v)); c.lineTo(x + w, Y(v)); c.stroke();
+        SR.label(c, yfmt(v), x - 6, Y(v) + 4, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
+      }
+      const N = 300;
+      for (let i = 0; i < N; i++) {
+        const l = xr[0] + ((xr[1] - xr[0]) * i) / N, l2 = xr[0] + ((xr[1] - xr[0]) * (i + 1)) / N;
+        const v = Mex(l, T);
+        const vis = T > 1000 && l >= 0.4 && l <= 0.7;
+        const fc = T > 1000 ? (vis ? SR.waveColor(l * 1000) : l < 0.4 ? [160, 120, 230] : [230, 110, 120]) : [255, 140, 80];
+        c.fillStyle = SR.css(fc, vis ? 0.8 : 0.35);
+        c.fillRect(X(l), Y(v), X(l2) - X(l) + 0.6, Y(0) - Y(v));
+      }
+      c.strokeStyle = col; c.lineWidth = 2.4;
+      c.beginPath();
+      for (let i = 0; i <= N; i++) { const l = xr[0] + ((xr[1] - xr[0]) * i) / N; const yy = Y(Mex(l, T)); if (i) c.lineTo(X(l), yy); else c.moveTo(X(l), yy); }
+      c.stroke();
+      c.strokeStyle = 'rgba(210,220,245,0.5)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, y); c.lineTo(x, y + h); c.lineTo(x + w, y + h); c.stroke();
+      const xt = T > 1000 ? [0.1, 0.5, 1, 1.5, 2, 2.5] : [5, 10, 15, 20, 25, 30];
+      xt.forEach((t) => { c.beginPath(); c.moveTo(X(t), y + h); c.lineTo(X(t), y + h + 5); c.stroke(); SR.label(c, String(t), X(t), y + h + 19, { size: 12, align: 'center', color: 'rgba(210,222,240,0.85)' }); });
+      SR.label(c, '파장(μm)', x + w, y + h + 36, { size: 12, align: 'right', color: 'rgba(210,222,240,0.85)' });
+      const lp = peak(T), mp = Mex(lp, T);
+      c.setLineDash([3, 4]); c.strokeStyle = 'rgba(255,255,255,0.6)';
+      c.beginPath(); c.moveTo(X(lp), Y(mp)); c.lineTo(X(lp), Y(0)); c.stroke(); c.setLineDash([]);
+      SR.label(c, `최대 ≈ ${lp.toFixed(lp < 1 ? 2 : 1)} μm`, X(lp) + 8, Y(mp) + 4, { size: 14, weight: 800, color: col, bg: 'rgba(4,10,24,0.7)' });
+      return { X, Y };
+    },
+
     drawCompareStatic(c) {
-      SR.label(c, '태양 복사 에너지와 지구 복사 에너지의 파장 분포', 30, 34, { size: 18, weight: 800 });
-      const box = { x: 70, y: 70, w: 700, h: 300 };
-      this.drawSpectrumChart(c, box, 'both', RANGE.compare, { peaks: true, noAbs: true, window: this.lv !== 'basic' });
-      SR.label(c, '태양 복사', box.x + 14, box.y + 150, { size: 15, weight: 700, color: '#ffd166' });
-      SR.label(c, '(약 5800 K)', box.x + 14, box.y + 170, { size: 13, color: '#ffd166' });
-      SR.label(c, '지구 복사', box.x + box.w - 12, box.y + 150, { size: 15, weight: 700, color: '#ff9a5a', align: 'right' });
-      SR.label(c, '(약 288 K)', box.x + box.w - 12, box.y + 170, { size: 13, color: '#ff9a5a', align: 'right' });
-      SR.label(c, '※ 두 곡선은 각각 최댓값을 1로 정규화한 것으로, 실제 에너지의 세기를 비교하는 그래프가 아닙니다.', 30, 432, { size: 13, color: 'rgba(225,232,245,0.85)' });
-      SR.label(c, '(실제로는 표면 온도가 높은 태양이 단위 면적당 훨씬 많은 에너지를 방출)', 30, 452, { size: 13, color: 'rgba(225,232,245,0.7)' });
+      SR.label(c, '태양 복사 에너지와 지구 복사 에너지의 파장 분포 (실제 세기)', 30, 34, { size: 18, weight: 800 });
+      const peakRatio = M_SUN_PEAK / M_EARTH_PEAK;
+      const totRatio = (T_SUN / T_EARTH) ** 4;
+      const manK = (v) => { const e = Math.floor(Math.log10(v)); return [v / 10 ** e, e]; };
+      if (this.s.cmp !== 'log') {
+        // 학습지처럼 두 그래프를 각자의 세로 눈금으로(단위는 같고 숫자 크기가 크게 다름)
+        SR.label(c, '태양 복사 (표면 약 5800 K)', 70, 70, { size: 15, weight: 700, color: '#ffd166' });
+        SR.label(c, 'W/(m²·μm)', 30, 92, { size: 11, color: 'rgba(210,222,240,0.75)' });
+        this.drawRealPanel(c, { x: 92, y: 100, w: 400, h: 260 }, T_SUN, [0.1, 2.5], 10e7, 2e7, (v) => (v ? `${v / 1e7}×10⁷` : '0'), '#ffd166');
+        SR.label(c, '지구 복사 (표면 약 288 K)', 560, 70, { size: 15, weight: 700, color: '#ff9a5a' });
+        SR.label(c, 'W/(m²·μm)', 528, 92, { size: 11, color: 'rgba(210,222,240,0.75)' });
+        this.drawRealPanel(c, { x: 560, y: 100, w: 220, h: 260 }, T_EARTH, [3, 30], 30, 6, (v) => String(v), '#ff9a5a');
+        SR.label(c, `※ 두 그래프는 세로축 숫자가 다릅니다: 지구 복사의 최댓값(약 ${Math.round(M_EARTH_PEAK)})은 태양 복사 최댓값(약 ${manK(M_SUN_PEAK)[0].toFixed(1)}×10${sup(manK(M_SUN_PEAK)[1])})의 약 ${Math.round(peakRatio / 1e4)}만분의 1`, 30, 425, { size: 13, color: 'rgba(225,232,245,0.9)' });
+        SR.label(c, `   단위 면적당 방출하는 전체 에너지(그래프 아래 넓이, σT⁴)는 태양이 지구의 약 ${Math.round(totRatio / 1e4)}만 배`, 30, 446, { size: 13, color: 'rgba(225,232,245,0.75)' });
+      } else {
+        // 하나의 로그 눈금: 실제 크기 차이를 한 그래프에
+        const box = { x: 100, y: 80, w: 680, h: 300 };
+        const xr = [0.1, 100], yr = [-2, 9];
+        const X = (l) => box.x + (Math.log10(l / xr[0]) / Math.log10(xr[1] / xr[0])) * box.w;
+        const Y = (v) => box.y + box.h - ((Math.log10(Math.max(v, 1e-3)) - yr[0]) / (yr[1] - yr[0])) * box.h;
+        for (let e = yr[0]; e <= yr[1]; e++) {
+          c.strokeStyle = 'rgba(210,220,245,0.1)';
+          c.beginPath(); c.moveTo(box.x, Y(10 ** e)); c.lineTo(box.x + box.w, Y(10 ** e)); c.stroke();
+          if ((e - yr[0]) % 2 === 0 || e === yr[1]) SR.label(c, `10${sup(e)}`, box.x - 6, Y(10 ** e) + 4, { size: 12, align: 'right', color: 'rgba(210,222,240,0.8)' });
+        }
+        SR.label(c, 'W/(m²·μm) — 한 칸마다 10배', box.x - 70, box.y - 10, { size: 12, color: 'rgba(210,222,240,0.8)' });
+        c.fillStyle = 'rgba(74,222,128,0.1)'; c.fillRect(X(8), box.y, X(13) - X(8), box.h);
+        SR.label(c, '대기의 창', (X(8) + X(13)) / 2, box.y + 16, { size: 12, weight: 700, align: 'center', color: '#86efac' });
+        [[T_SUN, '#ffd166'], [T_EARTH, '#ff9a5a']].forEach(([T, col]) => {
+          c.strokeStyle = col; c.lineWidth = 2.6;
+          c.beginPath();
+          let started = false;
+          for (let i = 0; i <= 400; i++) {
+            const l = xr[0] * (xr[1] / xr[0]) ** (i / 400), v = Mex(l, T);
+            if (v < 10 ** yr[0]) { started = false; continue; }
+            if (started) c.lineTo(X(l), Y(v)); else { c.moveTo(X(l), Y(v)); started = true; }
+          }
+          c.stroke();
+          const lp = peak(T), mp = Mex(lp, T);
+          c.fillStyle = col; c.beginPath(); c.arc(X(lp), Y(mp), 5, 0, 6.2832); c.fill();
+          const [mm, ee] = manK(mp);
+          SR.label(c, `최대 ≈ ${lp.toFixed(lp < 1 ? 2 : 1)} μm · ${ee >= 3 ? mm.toFixed(1) + '×10' + sup(ee) : Math.round(mp)}`, X(lp), Y(mp) - 12, { size: 14, weight: 800, align: 'center', color: col, bg: 'rgba(4,10,24,0.7)' });
+        });
+        c.strokeStyle = 'rgba(210,220,245,0.5)'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(box.x, box.y); c.lineTo(box.x, box.y + box.h); c.lineTo(box.x + box.w, box.y + box.h); c.stroke();
+        [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100].forEach((t) => SR.label(c, String(t), X(t), box.y + box.h + 19, { size: 12, align: 'center', color: 'rgba(210,222,240,0.85)' }));
+        SR.label(c, '파장(μm)', box.x + box.w, box.y + box.h + 36, { size: 12, align: 'right', color: 'rgba(210,222,240,0.85)' });
+        SR.label(c, '태양 복사(약 5800 K)', X(0.25), Y(1e3), { size: 15, weight: 700, color: '#ffd166' });
+        SR.label(c, '지구 복사(약 288 K)', X(20), Y(1e-1), { size: 15, weight: 700, color: '#ff9a5a' });
+        SR.label(c, `※ 같은 눈금으로 그리면 지구 복사의 최댓값은 태양의 약 ${Math.round(peakRatio / 1e4)}만분의 1이라, 보통(선형) 눈금에서는 보이지 않을 만큼 작습니다.`, 30, 438, { size: 13, color: 'rgba(225,232,245,0.9)' });
+      }
       const tx = 820, ty = 70, cw = [120, 120, 120], rh = 44;
       const rows = [['', '태양 복사', '지구 복사'], ['표면 온도', `약 ${T_SUN} K`, `약 ${T_EARTH} K`], ['최대 에너지 파장', `약 ${peak(T_SUN).toFixed(1)} μm`, `약 ${peak(T_EARTH).toFixed(0)} μm`], ['', '(가시광선)', '(적외선)'], ['종류', '단파 복사', '장파 복사']];
       c.fillStyle = 'rgba(13,26,53,0.9)';

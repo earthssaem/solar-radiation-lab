@@ -51,6 +51,12 @@
       this.app.markDirty();
     },
 
+    principleShort: ['파란빛이 더 잘 산란됨', '산란된 파란빛이 눈에 들어옴', '하늘은 파랗고, 낮은 태양은 붉게'],
+    liveShort() {
+      const sky = this.sightMode() === 'sky' ? this.skyCol : this.skyRef;
+      return `태양 고도 <b>${this.s.h}°</b> · 대기 통과 거리 <b>×${this.ms.toFixed(1)}</b> → 태양 <b>${this.sunWord()}</b>, 하늘 <b>${this.skyWord(sky)}</b>`;
+    },
+
     quiz: {
       q: '태양의 고도를 낮추면 태양이 붉게 보이는 이유는 무엇일까?',
       hint: '태양 고도를 낮추며 ‘대기 통과 거리’와 태양빛에 남은 색을 비교해 보세요.',
