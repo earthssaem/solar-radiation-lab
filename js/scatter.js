@@ -531,7 +531,7 @@
       const n = this.n;
       BANDS.forEach((b, bi) => {
         if (!this.s.show[b.key]) return;
-        const off = (bi - 1) * 2.4;
+        const off = (bi - 1) * 6.5; // 굵어진 세 색이 겹치지 않게
         const p = {
           ray, bi, dist: ray.tStart, tSc: Infinity, aer: false, off,
           x: 0, y: 0, vx: 0, vy: 0, state: 0, life: 0, trail: [], col: b.col, a: 1, w: 2.6, r: 2.9,
@@ -862,10 +862,10 @@
       ctx.fill();
       ctx.restore();
       // 대표 광선의 경로(먼저 표시해 두고 그 위로 빛이 진행)
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 2;
       rays.forEach((r) => {
         const a = this.at(r, r.tStart), b = this.at(r, r.kind === 'obs' ? r.tIn : r.tEnd);
-        ctx.strokeStyle = 'rgba(255,244,215,0.32)';
+        ctx.strokeStyle = 'rgba(255,244,215,0.4)';
         ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
         if (r.kind === 'point') {

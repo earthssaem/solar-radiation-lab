@@ -179,38 +179,52 @@
     if (p.trail.length > maxLen * 2) p.trail.splice(0, 2);
   };
   /** p: {x,y,trail[], col:[r,g,b], a, w, r, dash} */
+  // 빛 굵기 배율: 교실 대형 화면에서도 잘 보이도록 모든 모드의 빛을 한 번에 굵게
+  SR.LIGHT = { w: 2.3, r: 1.9 };
   SR.drawPhoton = function (ctx, p) {
     const t = p.trail;
     const a = p.a == null ? 1 : p.a;
     if (a <= 0.01) return;
     const col = p.col;
+    const W = (p.w || 2) * SR.LIGHT.w;
+    const rgb = `${col[0]},${col[1]},${col[2]}`;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     if (t.length >= 4) {
-      ctx.lineWidth = p.w || 2;
-      if (p.dash) ctx.setLineDash(p.dash);
-      // 꼬리: 두 겹으로 그려 끝으로 갈수록 흐려지게
-      ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.28 * a})`;
-      ctx.beginPath();
-      ctx.moveTo(t[0], t[1]);
-      for (let i = 2; i < t.length; i += 2) ctx.lineTo(t[i], t[i + 1]);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
+      if (p.dash) ctx.setLineDash(p.dash.map((d) => d * SR.LIGHT.w * 0.9));
+      const path = (from) => {
+        ctx.beginPath();
+        ctx.moveTo(t[from], t[from + 1]);
+        for (let i = from + 2; i < t.length; i += 2) ctx.lineTo(t[i], t[i + 1]);
+        ctx.lineTo(p.x, p.y);
+      };
+      // 바깥 빛무리 → 꼬리 전체 → 머리 쪽 절반(진하게)
+      ctx.lineWidth = W * 2.4;
+      ctx.strokeStyle = `rgba(${rgb},${0.12 * a})`;
+      path(0); ctx.stroke();
+      ctx.lineWidth = W;
+      ctx.strokeStyle = `rgba(${rgb},${0.45 * a})`;
+      path(0); ctx.stroke();
       const half = Math.max(0, (t.length >> 2) << 1);
-      ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.75 * a})`;
-      ctx.beginPath();
-      ctx.moveTo(t[half], t[half + 1]);
-      for (let i = half + 2; i < t.length; i += 2) ctx.lineTo(t[i], t[i + 1]);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
+      ctx.strokeStyle = `rgba(${rgb},${0.95 * a})`;
+      path(half); ctx.stroke();
       if (p.dash) ctx.setLineDash([]);
     }
-    const r = p.r || 2.4;
-    ctx.fillStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.25 * a})`;
+    const r = (p.r || 2.4) * SR.LIGHT.r;
+    const g = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, r * 3);
+    g.addColorStop(0, `rgba(${rgb},${0.5 * a})`);
+    g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, r * 2.4, 0, 6.2832);
+    ctx.arc(p.x, p.y, r * 3, 0, 6.2832);
     ctx.fill();
-    ctx.fillStyle = `rgba(${Math.min(255, col[0] + 90)},${Math.min(255, col[1] + 90)},${Math.min(255, col[2] + 90)},${a})`;
+    ctx.fillStyle = `rgba(${rgb},${a})`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, 6.2832);
+    ctx.fill();
+    ctx.fillStyle = `rgba(${Math.min(255, col[0] + 120)},${Math.min(255, col[1] + 120)},${Math.min(255, col[2] + 120)},${a})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r * 0.5, 0, 6.2832);
     ctx.fill();
   };
 
@@ -237,7 +251,7 @@
         const a = (e.a == null ? 1 : e.a) * alphaMul;
         if (e.type === 'ring') {
           ctx.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},${(1 - k) * 0.85 * a})`;
-          ctx.lineWidth = e.lw || 1.6;
+          ctx.lineWidth = (e.lw || 1.6) * 1.6;
           ctx.beginPath();
           ctx.arc(e.x, e.y, (e.r0 || 2) + (e.r1 || 12) * SR.smooth(k), 0, 6.2832);
           ctx.stroke();

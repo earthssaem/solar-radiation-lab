@@ -365,7 +365,7 @@
       const pts = p.pts;
       if (p.hidden || L <= 0) return null;
       ctx.strokeStyle = SR.css(p.col, alpha);
-      ctx.lineWidth = p.w;
+      ctx.lineWidth = p.w * 1.6; // 대형 화면에서도 잘 보이게 굵게
       ctx.lineCap = 'round';
       if (p.dash) ctx.setLineDash(p.dash);
       if (glow) { ctx.shadowColor = SR.css(p.col, 0.7); ctx.shadowBlur = 10; }
@@ -391,7 +391,7 @@
       ctx.setLineDash([]);
       ctx.shadowBlur = 0;
       const done = L >= p.len - 0.5;
-      if (done && p.end === 'arrow') SR.arrowHead(ctx, hx + Math.cos(ang) * 4, hy + Math.sin(ang) * 4, ang, 10 + p.w * 1.6, SR.css(p.col, alpha));
+      if (done && p.end === 'arrow') SR.arrowHead(ctx, hx + Math.cos(ang) * 6, hy + Math.sin(ang) * 6, ang, 12 + p.w * 2.4, SR.css(p.col, alpha));
       return { x: hx, y: hy, done };
     },
 
