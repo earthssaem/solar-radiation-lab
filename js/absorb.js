@@ -81,24 +81,12 @@
       { v: 'win', label: '대기의 창', sw: '#4ade80' },
     ],
   };
-  // 대표 광선의 파장(μm) — 선택한 기체의 흡수대와 그 밖의 파장을 섞어 보여 줌
-  const REP = {
-    sun: {
-      all: [0.25, 0.5, 1.38, 0.36, 0.62, 1.05, 2.7, 0.45],
-      o3: [0.25, 0.28, 0.55, 0.33, 0.37],
-      h2o: [1.38, 1.05, 1.87, 0.55, 0.94, 1.6],
-      co2: [2.7, 1.6, 2.0, 0.55, 2.7],
-      vis: [0.42, 0.5, 0.58, 0.66, 0.7],
-    },
-    earth: {
-      all: [15, 10, 6.3, 11.5, 20, 9.6, 7.7, 12],
-      h2o: [6.3, 10, 20, 5.8, 25, 11],
-      co2: [15, 10.5, 14.3, 15.8, 11.5],
-      ch4: [7.7, 10, 7.5, 12],
-      n2o: [7.8, 11, 17, 10],
-      win: [8.6, 10, 11, 12.2, 9.6, 10.5],
-    },
+  // 빛 다발: 실제 복사처럼 여러 파장이 함께 진행(짧은 파장 → 긴 파장 순서로 나란히)
+  const BUNDLE = {
+    sun: [0.25, 0.3, 0.35, 0.42, 0.48, 0.55, 0.62, 0.68, 0.85, 0.94, 1.13, 1.38, 1.6, 1.87, 2.2, 2.7],
+    earth: [5, 6.3, 7, 7.7, 8.6, 9.6, 10.5, 11.5, 12.5, 14, 15, 16.5, 18, 22],
   };
+  const SPACING = 7;
 
   function colOf(l) {
     if (l < 0.4) return [196, 160, 255];
@@ -207,8 +195,7 @@
     reset() {
       this.ph = [];
       this.fx.clear();
-      this.acc = 0.6;
-      this.seqI = 0;
+      this.acc = 0.85;
       this.back = 0; // 지표로 돌아온 재방출 복사(정성적 표시용)
       this.t = 0;
       this.lastMark = null;
@@ -275,9 +262,6 @@
         options: SEL[sc].map((o) => ({ value: o.v, label: o.label, swatch: o.sw })),
         onChange: (v) => {
           this.s.sel[sc] = v;
-          this.ph = this.ph.filter((q) => q.re); // 새 선택에 맞는 대표 광선부터 다시
-          this.seqI = 0;
-          this.acc = 0.8;
           this.change = this.selText(v, sc);
           this.paintSel();
           this.onChange();
@@ -341,21 +325,14 @@
     },
     gasesIn(sc) { return sc === 'sun' ? ['o3', 'h2o', 'co2'] : ['h2o', 'co2', 'ch4', 'n2o', 'o3']; },
 
-    /* ---------------- 대표 광선 ---------------- */
-    nextLambda() {
-      const sc = this.s.scene, v = this.sel();
-      if (this.lv !== 'basic' && v === 'all') {
-        // 심화·전체: 실제 방출 스펙트럼에 비례해 파장을 고름(로그 파장 축 기준)
-        const [a, b] = sc === 'sun' ? [0.2, 4] : [4, 50];
-        const peakVal = sc === 'sun' ? 0.65 : 12;
-        for (let i = 0; i < 60; i++) {
-          const l = a * Math.pow(b / a, Math.random());
-          if (Math.random() < (spec(l, sc) * l) / peakVal) return l;
-        }
-        return sc === 'sun' ? 0.5 : 10;
-      }
-      const list = REP[sc][v];
-      return list[this.seqI++ % list.length];
+    /* ---------------- 빛 다발 ---------------- */
+    // 선택한 기체·영역에 해당하는 파장인가(강조 표시용; 흡수 여부와는 무관)
+    isOn(l) {
+      const v = this.sel();
+      if (!v || v === 'all') return true;
+      if (v === 'vis') return l >= 0.4 && l <= 0.7;
+      if (v === 'win') return l >= 8 && l <= 13;
+      return GAS[v].A(l) > 0.2;
     },
     // 흡수 여부와 흡수한 기체: 흡수 확률 = 그 파장에서 대기 전체의 흡수 정도
     fate(l, sc) {
@@ -370,30 +347,39 @@
     emit() {
       const sc = this.s.scene;
       if (sc === 'compare') return;
-      const l = this.nextLambda();
-      const gas = this.fate(l, sc);
-      const col = colOf(l);
-      this.slot = ((this.slot || 0) + 0.37) % 1;
-      const speed = 210;
-      let p;
+      const ls = BUNDLE[sc];
+      this.slot = ((this.slot || 0) + 0.41) % 1;
+      const speed = 200;
+      let cx, cy, dir;
       if (sc === 'sun') {
         const L = Math.hypot(0.24, 1);
-        p = { x: 50 + this.slot * (SW - 270), y: -12, vx: (0.24 / L) * speed, vy: (1 / L) * speed };
-        p.fy = gas ? SR.rand(...GAS_Y[gas]) : GND;
+        dir = [0.24 / L, 1 / L];
+        cx = 110 + this.slot * (SW - 380); cy = -14;
       } else {
-        const a = (Math.random() - 0.5) * 0.6;
-        p = { x: 70 + this.slot * (SW - 170), y: GND - 2, vx: Math.sin(a) * speed, vy: -Math.cos(a) * speed };
-        p.fy = gas ? SR.rand(...GAS_Y[gas]) : -20;
+        const a = (Math.random() - 0.5) * 0.3;
+        dir = [Math.sin(a), -Math.cos(a)];
+        cx = 110 + this.slot * (SW - 260); cy = GND - 2;
       }
-      Object.assign(p, { l, gas, sc, col, dash: dashOf(l), trail: [], a: 1, w: 2.6, r: 3, state: 0, life: 0 });
-      this.ph.push(p);
+      const nrm = [-dir[1], dir[0]];
+      const bundle = { id: (this.bid = (this.bid || 0) + 1), re: 0 };
+      ls.forEach((l, i) => {
+        const off = (i - (ls.length - 1) / 2) * SPACING;
+        const gas = this.fate(l, sc);
+        const p = { x: cx + nrm[0] * off, y: cy + nrm[1] * off, vx: dir[0] * speed, vy: dir[1] * speed };
+        p.fy = gas ? SR.rand(...GAS_Y[gas]) : sc === 'sun' ? GND : -20;
+        Object.assign(p, { l, gas, sc, bundle, col: colOf(l), dash: dashOf(l), trail: [], a: 1, w: 1.1, r: 1.05, state: 0, life: 0, idx: i });
+        this.ph.push(p);
+      });
     },
     reemit(p) {
       // 흡수한 기체가 적외선을 여러 방향으로 다시 방출(지표 방향만이 아님)
+      // 모든 흡수 줄기가 재방출하지만, 화면이 복잡하지 않도록 다발마다 일부만 그림
+      if (p.bundle.re >= 2 && Math.random() > 0.15) return;
+      p.bundle.re++;
       const th0 = Math.random() * Math.PI * 2;
       for (let i = 0; i < 2; i++) {
         const th = th0 + i * Math.PI + (Math.random() - 0.5) * 0.8;
-        this.ph.push({ x: p.x, y: p.y, vx: Math.cos(th) * 190, vy: Math.sin(th) * 190, l: p.l, re: true, col: [255, 170, 110], dash: [4, 4], trail: [p.x, p.y], a: 0.95, w: 2, r: 2.6, state: 0, life: 0 });
+        this.ph.push({ x: p.x, y: p.y, vx: Math.cos(th) * 190, vy: Math.sin(th) * 190, l: p.l, re: true, col: [255, 150, 80], dash: [4, 4], trail: [p.x, p.y], a: 0.8, w: 1.2, r: 1.4, state: 0, life: 0 });
       }
       this.fx.add({ type: 'ring', x: p.x, y: p.y, col: [255, 170, 110], r0: 3, r1: 16, dur: 0.6, lw: 2 });
     },
@@ -406,14 +392,14 @@
     update(dt) {
       this.t += dt;
       if (this.s.scene !== 'compare') {
-        this.acc += (this.lv === 'basic' ? 1.15 : 2.4) * dt;
+        this.acc += (this.lv === 'basic' ? 0.42 : 0.6) * dt;
         while (this.acc >= 1) { this.acc -= 1; this.emit(); }
       }
       for (const k of GAS_ORDER) for (const m of this.mol[k]) m.glow = Math.max(0, m.glow - dt * 0.9);
       this.back = Math.max(0, this.back - dt * 0.25);
       const keep = [];
       for (const p of this.ph) {
-        SR.pushTrail(p, p.re ? 40 : 18);
+        SR.pushTrail(p, p.re ? 40 : 26);
         if (p.state === 0) {
           p.x += p.vx * dt; p.y += p.vy * dt;
           if (p.re) {
@@ -545,13 +531,43 @@
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, SW, SR.H); ctx.clip();
       ctx.globalCompositeOperation = 'lighter';
-      for (const p of this.ph) SR.drawPhoton(ctx, p);
+      for (const p of this.ph) {
+        if (p.re) { SR.drawPhoton(ctx, p); continue; }
+        const on = this.isOn(p.l);
+        const a0 = p.a, w0 = p.w;
+        p.a = a0 * (on ? 1 : 0.28);
+        p.w = on ? 1.3 : 0.8;
+        SR.drawPhoton(ctx, p);
+        p.a = a0; p.w = w0;
+      }
       this.fx.draw(ctx);
       ctx.globalCompositeOperation = 'source-over';
-      // 대표 광선 옆에 파장 표시 → 그래프의 같은 파장과 연결
+      // 다발 머리에 이름표: 전체 → 파장 영역, 기체 선택 → 강조된 줄기의 파장
+      const v = this.sel();
+      const seen = {};
       for (const p of this.ph) {
         if (p.re || p.state !== 0) continue;
-        SR.label(ctx, fmtL(p.l), p.x + 8, p.y - 6, { size: 12, weight: 700, color: SR.css(p.col), bg: 'rgba(4,10,24,0.6)' });
+        const b = p.bundle.id;
+        if (v === 'all') {
+          const grp = p.l < 0.4 ? '자외선' : p.l <= 0.7 ? '가시광선' : '적외선';
+          const k = b + grp;
+          if (seen[k] || p.sc === 'earth') continue;
+          seen[k] = 1;
+          if (p.sc === 'sun' && p.y > 260) continue;
+          SR.label(ctx, grp, p.x + 6, p.y - 10, { size: 12, weight: 700, color: SR.css(p.col), bg: 'rgba(4,10,24,0.6)', align: 'right' });
+        } else if (this.isOn(p.l)) {
+          // 다발마다 이름표 하나: 강조된 줄기들의 파장을 한 줄로
+          (seen[b] = seen[b] || { ls: [], x: -1e9, y: p.y, col: p.col }).ls.push(p.l);
+          if (p.x > seen[b].x) Object.assign(seen[b], { x: p.x, y: p.y, col: p.col });
+        }
+      }
+      if (v !== 'all') {
+        for (const b in seen) {
+          const g = seen[b];
+          const ls = [...new Set(g.ls)].sort((a, c) => a - c);
+          const txt = ls.map((l) => fmtL(l).replace(' μm', '')).join(' · ') + ' μm';
+          SR.label(ctx, txt, g.x + 14, g.y, { size: 13, weight: 700, color: SR.css(g.col), bg: 'rgba(4,10,24,0.72)', base: 'middle' });
+        }
       }
       ctx.restore();
     },
@@ -838,12 +854,13 @@
         hg.addColorStop(1, 'rgba(255,100,40,0)');
         ctx.fillStyle = hg;
         ctx.fillRect(0, GND, SW, 90);
-        SR.label(ctx, '지표가 적외선(장파 복사)을 방출 ↑', 14, GND + 86, { size: 14, color: '#ffc49a' });
+        SR.label(ctx, '지표가 적외선(장파 복사)을 방출 ↑ · 한 다발에 여러 파장이 함께', 14, GND + 86, { size: 14, color: '#ffc49a' });
         if (this.back > 0.3) SR.label(ctx, '대기가 다시 내보낸 복사 일부가 지표로 → 온실 효과', SW - 14, GND - 14, { size: 15, weight: 700, align: 'right', color: '#ffb27a', bg: 'rgba(4,10,24,0.7)' });
         if (this.sel() === 'win') SR.label(ctx, '대기의 창(8~13 μm) → 우주로', SW / 2, 30, { size: 16, weight: 800, align: 'center', color: '#86efac', bg: 'rgba(4,10,24,0.7)' });
       } else {
         SR.drawSun(ctx, 40, 30, 24);
         SR.label(ctx, '태양 복사(단파) ↓', 78, 36, { size: 15, weight: 700, color: '#ffd166' });
+        SR.label(ctx, '빛 한 다발 = 여러 파장이 함께 진행', 78, 58, { size: 12, color: 'rgba(255,240,205,0.8)' });
       }
       this.drawMolecules(ctx);
       this.drawPhotons(ctx);
@@ -852,9 +869,10 @@
       if (b) {
         const X = this.axis(RANGE[sc], b.x, b.w);
         for (const p of this.ph) {
-          if (p.re || p.l < RANGE[sc][0] || p.l > RANGE[sc][1]) continue;
+          // 지금 대기에 흡수되고 있는 줄기의 파장만 그래프에 표시
+          if (p.re || p.state !== 1 || !p.gas || p.l < RANGE[sc][0] || p.l > RANGE[sc][1]) continue;
           const x = X(p.l);
-          const col = p.state === 1 && p.gas ? GAS[p.gas].col : p.col;
+          const col = GAS[p.gas].col;
           ctx.strokeStyle = SR.css(col, 0.9);
           ctx.lineWidth = 2;
           ctx.setLineDash([3, 3]);
@@ -863,7 +881,7 @@
           SR.arrowHead(ctx, x, b.y + b.h + 2, -Math.PI / 2, 9, SR.css(col));
           if (p.state === 1) { ctx.strokeStyle = SR.css(col); ctx.beginPath(); ctx.arc(x, b.y + b.h - 10, 7, 0, 6.2832); ctx.stroke(); }
         }
-        SR.label(ctx, '┆ 장면 속 광선의 파장', b.x + b.w, b.y + 10, { size: 12, align: 'right', color: 'rgba(230,236,248,0.7)' });
+        SR.label(ctx, '┆ 지금 대기에 흡수되는 파장', b.x + b.w, b.y + 10, { size: 12, align: 'right', color: 'rgba(230,236,248,0.7)' });
       }
     },
   };
